@@ -1,0 +1,2305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASCII Tree - Hands</title>
+<style>
+html, body { margin: 0; height: 100%; background: #666e7d; overflow: hidden; }
+canvas { display: block; position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; cursor: pointer; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+'use strict';
+
+/* ============================== helpers ============================== */
+const TAU = Math.PI * 2;
+const DEG = Math.PI / 180;
+const COLS = 124;
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const fract = x => x - Math.floor(x);
+const smooth = t => { t = clamp01(t); return t * t * (3 - 2 * t); };
+const easeOutCubic = t => { t = clamp01(t); return 1 - Math.pow(1 - t, 3); };
+const easeOutBack = t => {
+  t = clamp01(t);
+  const c1 = 1.70158, c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+};
+const easeInOut15 = g => (g < 0.5 ? Math.pow(2 * g, 1.5) / 2 : 1 - Math.pow(2 * (1 - g), 1.5) / 2);
+const easeInOut15Inv = e => (e < 0.5 ? Math.pow(2 * e, 1 / 1.5) / 2 : 1 - Math.pow(2 * (1 - e), 1 / 1.5) / 2);
+/* the tree rises at an almost steady pace, quick off the mark, and is whole a little after 5.3 s */
+const growF = t => Math.pow(clamp01((t - 2.1) / 3.45), 0.8) * 1.06 * (0.5 + 0.5 * smooth((t - 2.1) / 0.3));
+const tPassOf = f => 2.1 + 3.45 * Math.pow(clamp01(f / 1.06), 1.25);
+
+function mulberry(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function h2(x, y) {
+  let n = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263)) | 0;
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+}
+function h3(x, y, z) { return h2((x | 0) + Math.imul(z | 0, 7919), (y | 0) + Math.imul(z | 0, 104729)); }
+
+/* colours are packed as 0xAARRGGBB */
+function hsl(h, s, l, a) {
+  h = ((h % 360) + 360) % 360;
+  s = clamp01(s); l = clamp01(l);
+  const c = (1 - Math.abs(2 * l - 1)) * s, hp = h / 60, x = c * (1 - Math.abs(hp % 2 - 1)), m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (hp < 1) { r = c; g = x; } else if (hp < 2) { r = x; g = c; } else if (hp < 3) { g = c; b = x; }
+  else if (hp < 4) { g = x; b = c; } else if (hp < 5) { r = x; b = c; } else { r = c; b = x; }
+  const A = a === undefined ? 255 : (clamp01(a) * 255 + 0.5) | 0;
+  return ((A << 24) | ((((r + m) * 255 + 0.5) | 0) << 16) | ((((g + m) * 255 + 0.5) | 0) << 8) | (((b + m) * 255 + 0.5) | 0)) >>> 0;
+}
+function rgba(r, g, b, a) {
+  const A = a === undefined ? 255 : (clamp01(a) * 255 + 0.5) | 0;
+  return ((A << 24) | (r << 16) | (g << 8) | b) >>> 0;
+}
+const HUE_STOPS = [318, 282, 228, 190, 150, 56, 38, 56, 150, 190, 228, 282, 318];
+function rampHue(p) {
+  p = fract(p) * 12;
+  const i = Math.min(11, Math.floor(p));
+  return lerp(HUE_STOPS[i], HUE_STOPS[i + 1], p - i);
+}
+/* light colour: yellows and golds are pulled toward amber so they do not glare */
+function lightCol(h, l, a) {
+  let s = 1;
+  if (h < 100) { const k = smooth((100 - h) / 45); s = 1 - 0.34 * k; l -= 0.05 * k; }
+  return hsl(h, s, l, a);
+}
+
+const c_hash = 35, c_at = 64, c_pct = 37, c_amp = 38, c_8 = 56, c_plus = 43, c_star = 42, c_dot = 46;
+const c_colon = 58, c_eq = 61, c_minus = 45, c_pipe = 124, c_slash = 47, c_bslash = 92, c_o = 111;
+const c_0 = 48, c_O = 79, c_x = 120, c_apos = 39, c_under = 95, c_lt = 60, c_3 = 51;
+const CHS = [];
+for (let i = 0; i < 128; i++) CHS.push(String.fromCharCode(i));
+const SPACES = ['', ' ', '  ', '   ', '    ', '     ', '      ', '       ', '        '];
+const TREE_GLYPHS = [c_8, c_amp, c_pct, c_hash, c_at];
+const WHITE = rgba(252, 252, 255);
+
+/* ============================== canvas and grid ============================== */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const lay = document.createElement('canvas'), lctx = lay.getContext('2d');
+const bgc = document.createElement('canvas'), bgx = bgc.getContext('2d');
+const bl1 = document.createElement('canvas'), bl1x = bl1.getContext('2d');
+const bl2 = document.createElement('canvas'), bl2x = bl2.getContext('2d');
+const bl3 = document.createElement('canvas'), bl3x = bl3.getContext('2d');
+const tintC = document.createElement('canvas'), tintX = tintC.getContext('2d');
+let tintImg = null, tintPx = new Uint32Array(1), glowImg = null, glowPx = new Uint32Array(1);
+let rowText = false, textOff = 0;
+
+let dpr = 1, W = 2, H = 2, PW = 2, CW = 1, CH = 1.62, AR = 1 / 1.62, rows = 1, gcols = COLS, extra = 0;
+let gridX0 = 0, stageX = 0, cxc = 61.5;
+let chA = new Uint8Array(1), colA = new Uint32Array(1), depA = new Float32Array(1), dimA = new Float32Array(1);
+let tZ = new Float32Array(1), tRs = new Float32Array(1), tGs = new Float32Array(1), tBs = new Float32Array(1);
+let tWs = new Float32Array(1), tBd = new Float32Array(1), tYg = new Float32Array(1), tFs = new Float32Array(1);
+let crossX = new Float32Array(8), crossN = new Uint8Array(1);
+let floorRow = 0, baseRow = 0, tipRow = 0, treeH = 1, tilt = 0.1, ftilt = 0.17;
+const TR = 0.32 * COLS;
+const FFLOOR = -(0.845 - 0.724) / (0.724 - 0.273);
+
+function resize() {
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  W = Math.max(2, Math.floor(window.innerWidth * dpr));
+  H = Math.max(2, Math.floor(window.innerHeight * dpr));
+  cv.width = W; cv.height = H;
+  PW = Math.min(W, H * 9 / 16);
+  CW = PW / COLS; CH = CW * 1.62; AR = CW / CH;
+  rows = Math.max(1, Math.floor(H / CH));
+  stageX = (W - PW) / 2;
+  extra = Math.max(0, Math.ceil(stageX / CW - 1e-6));
+  gcols = COLS + 2 * extra;
+  gridX0 = stageX - extra * CW;
+  cxc = extra + 61.5;
+  const n = gcols * rows;
+  chA = new Uint8Array(n); colA = new Uint32Array(n); depA = new Float32Array(n); dimA = new Float32Array(n);
+  tZ = new Float32Array(n); tRs = new Float32Array(n); tGs = new Float32Array(n); tBs = new Float32Array(n);
+  tWs = new Float32Array(n); tBd = new Float32Array(n); tYg = new Float32Array(n); tFs = new Float32Array(n);
+  crossX = new Float32Array(rows * 8); crossN = new Uint8Array(rows);
+  floorRow = 0.845 * rows; baseRow = 0.724 * rows; tipRow = 0.273 * rows; treeH = baseRow - tipRow;
+  tilt = 0.17 * AR; ftilt = 0.28 * AR;
+  lay.width = W; lay.height = H;
+  tintC.width = gcols; tintC.height = rows;
+  tintImg = tintX.createImageData(gcols, rows);
+  tintPx = new Uint32Array(tintImg.data.buffer);
+  bgc.width = W; bgc.height = H;
+  bl1.width = gcols; bl1.height = rows;
+  bl2.width = Math.max(1, gcols >> 1); bl2.height = Math.max(1, rows >> 1);
+  bl3.width = Math.max(1, gcols >> 2); bl3.height = Math.max(1, rows >> 2);
+  glowImg = bl1x.createImageData(gcols, rows);
+  glowPx = new Uint32Array(glowImg.data.buffer);
+  const gr = bgx.createLinearGradient(0, 0, 0, H);
+  gr.addColorStop(0, '#323a47'); gr.addColorStop(0.55, '#394250');
+  gr.addColorStop(0.86, '#4b5463'); gr.addColorStop(1, '#666e7d');
+  bgx.fillStyle = gr; bgx.fillRect(0, 0, W, H);
+  lctx.font = 'bold ' + (0.95 * CH).toFixed(2) + 'px Menlo, Consolas, "DejaVu Sans Mono", monospace';
+  lctx.textAlign = 'center'; lctx.textBaseline = 'middle';
+  /* where the browser can space letters, a whole row is drawn as one string: the letter spacing is set so that
+     every character lands exactly on its cell */
+  rowText = 'letterSpacing' in lctx;
+  if (rowText) {
+    lctx.letterSpacing = '0px';
+    if ('fontKerning' in lctx) lctx.fontKerning = 'none';
+    const adv = lctx.measureText('MMMMMMMMMMMMMMMMMMMM').width / 20;
+    lctx.letterSpacing = (CW - adv).toFixed(4) + 'px';
+    lctx.textAlign = 'left';
+    textOff = (CW - adv) / 2;
+  }
+}
+
+function put(x, y, ch, col, z) {
+  x = Math.floor(x + 0.5); y = Math.floor(y + 0.5);
+  if (x < 0 || x >= gcols || y < 0 || y >= rows) return;
+  const i = y * gcols + x;
+  if (z >= depA[i]) { depA[i] = z; chA[i] = ch; colA[i] = col; }
+}
+
+/* halos: characters sprinkled into empty cells around bright sources */
+const HMAX = 16;
+const haX = new Float32Array(HMAX), haY = new Float32Array(HMAX), haR = new Float32Array(HMAX), haS = new Float32Array(HMAX);
+const haC = new Uint32Array(HMAX);
+let nHalo = 0;
+function addHalo(x, y, r, s, col) {
+  if (nHalo >= HMAX || s <= 0.01) return;
+  haX[nHalo] = x; haY[nHalo] = y; haR[nHalo] = r; haS[nHalo] = s; haC[nHalo] = col; nHalo++;
+}
+function drawHalos() {
+  const tk = Math.floor(tReal * 9);
+  for (let k = 0; k < nHalo; k++) {
+    const R = haR[k], hx = haX[k], hy = haY[k], st = haS[k], col = haC[k];
+    const y0 = Math.max(0, Math.floor(hy - R * AR)), y1 = Math.min(rows - 1, Math.ceil(hy + R * AR));
+    const x0 = Math.max(0, Math.floor(hx - R)), x1 = Math.min(gcols - 1, Math.ceil(hx + R));
+    for (let y = y0; y <= y1; y++) {
+      const dy = (y - hy) / AR;
+      for (let x = x0; x <= x1; x++) {
+        const i = y * gcols + x;
+        if (chA[i] !== 0) continue;
+        const dx = x - hx, d = Math.sqrt(dx * dx + dy * dy);
+        if (d > R) continue;
+        const q = 1 - d / R;
+        if (h3(x, y, tk + k * 31) < st * q * q) {
+          chA[i] = d < R * 0.33 ? c_plus : d < R * 0.66 ? c_colon : c_dot;
+          colA[i] = (col & 0xffffff) | ((((0.35 + 0.65 * q) * 255) | 0) << 24);
+        }
+      }
+    }
+  }
+}
+
+/* ============================== clocks and state ============================== */
+let state = 'start';
+let mode = 'idle';
+let paused = false;
+let tReal = 0, T = 0, prevT = 0, Tlimit = 0, stage = 0, treeT = 0;
+let lastMs = 0;
+let pending = null;
+let ignoreUntil = 0;
+let quality = 4, emaDt = 5, slowT = 0;
+const STAGE_END = [0, 1.5, 5.6, 6.25, 9.25, 10.8, Infinity];
+const twists = [];
+let twistDir = 1, twistCool = 0;
+
+function motionDone() { return T >= Tlimit - 1e-4; }
+function twistExtra() {
+  let e = 0;
+  for (let i = 0; i < twists.length; i++) e += (Math.PI / 3) * easeOutCubic((tReal - twists[i]) / 1.5);
+  return e;
+}
+function doTwist() {
+  if (state !== 'film' || T <= 2.1) return;
+  twists.push(tReal);
+  if (twists.length > 12) twists.shift();
+}
+
+/* ============================== static scene data ============================== */
+const tR = [1.15, 0.92, 0.74, 0.57, 0.39, 0.22];
+const tFb = [0, 0.205, 0.385, 0.545, 0.685, 0.81];
+const tFt = [0.265, 0.445, 0.605, 0.745, 0.87, 1.0];
+const tLobes = [13, 11, 10, 8, 7, 6];
+const tDepth = [0.15, 0.16, 0.17, 0.19, 0.21, 0.25];
+const tDroop = [0.072, 0.046, 0.038, 0.03, 0.024, 0.015];
+const LB = [], LLEN = [], LBR = [], LDR = [];
+function prof(k, u) { return k < 5 ? 1 - 0.5 * Math.pow(u, 0.9) : Math.pow(Math.max(0, 1 - u), 0.8); }
+
+let lobeI = 0, lobeShape = 0;
+function lobeAt(k, a) {
+  const b = LB[k], n = tLobes[k];
+  a = a - Math.floor(a / TAU) * TAU;
+  if (a < b[0]) a += TAU;
+  let i = Math.min(n - 1, Math.max(0, Math.floor((a - b[0]) / TAU * n)));
+  while (i > 0 && a < b[i]) i--;
+  while (i < n - 1 && a >= b[i + 1]) i++;
+  lobeI = i;
+  const s = clamp01((a - b[i]) / (b[i + 1] - b[i]));
+  lobeShape = Math.pow(Math.max(0, Math.sin(Math.PI * s)), 0.55);
+}
+function edgeF(k) { return LLEN[k][lobeI] * (1 - tDepth[k] * (1 - lobeShape)); }
+
+const WT = new Float32Array(257);
+function treeW(f) {
+  if (f <= 0) return WT[0];
+  if (f >= 1) return WT[256];
+  const p = f * 256, i = Math.floor(p);
+  return lerp(WT[i], WT[i + 1], p - i);
+}
+
+const NB = 100000, NL = 5000;
+let pR, pSin, pCos, pF, pDr, pT, pB, pFr, pHv, pGj, pTintC, pTintT, pTintS;
+const qIdx = new Int32Array(NB), qZ = new Float32Array(NB), qSp = new Float32Array(NB), qCp = new Float32Array(NB), qExt = new Float32Array(NB);
+const lR = new Float32Array(NL), lSin = new Float32Array(NL), lCos = new Float32Array(NL), lFy = new Float32Array(NL);
+const lB = new Uint16Array(NL);
+let NBULB = 0;
+let bOn, bHue, bPh, bSpd, bGl, bCol, bCh, bAng, bRad, bFy, bTier, bGold;
+const baubles = [];
+const COMET_A0 = 0.9;
+const gR = new Uint8Array(8 * 64), gG = new Uint8Array(8 * 64), gBl = new Uint8Array(8 * 64);
+
+function genTree() {
+  const rng = mulberry(20251225);
+  for (let k = 0; k < 6; k++) {
+    const n = tLobes[k];
+    const b = new Float32Array(n + 1), ln = new Float32Array(n), br = new Float32Array(n), dr = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      b[i] = (i + (rng() - 0.5) * 0.5) / n * TAU;
+      ln[i] = 0.93 + 0.07 * rng();
+      br[i] = 1.08 - (0.34 + 0.05 * k) * rng();
+      dr[i] = 0.65 + 0.7 * rng();
+    }
+    b[n] = b[0] + TAU;
+    LB.push(b); LLEN.push(ln); LBR.push(br); LDR.push(dr);
+  }
+  /* width envelope, smoothed so the ring and the comets move without jumps */
+  const raw = new Float32Array(257);
+  for (let i = 0; i <= 256; i++) {
+    const f = i / 256;
+    let w = 0;
+    for (let k = 0; k < 6; k++) {
+      if (f >= tFb[k] && f <= tFt[k]) w = Math.max(w, tR[k] * TR * prof(k, (f - tFb[k]) / (tFt[k] - tFb[k])));
+    }
+    raw[i] = w;
+  }
+  for (let i = 0; i <= 256; i++) {
+    let s = 0, c = 0;
+    for (let j = -9; j <= 9; j++) { const q = i + j; if (q >= 0 && q <= 256) { s += raw[q]; c++; } }
+    WT[i] = s / c;
+  }
+  WT[256] = 0;
+
+  /* green lookup: 8 hue variants x 64 brightness levels */
+  for (let hv = 0; hv < 8; hv++) {
+    for (let lv = 0; lv < 64; lv++) {
+      const t = lv / 63;
+      const c = hsl(174 - 44 * t + (hv - 3.5) * 2.4, 0.42 + 0.26 * t, 0.045 + 0.54 * t);
+      gR[hv * 64 + lv] = (c >> 16) & 255; gG[hv * 64 + lv] = (c >> 8) & 255; gBl[hv * 64 + lv] = c & 255;
+    }
+  }
+
+  /* bulbs: a rainbow string on each rim, a gold string just inside it */
+  const B = [];
+  const rainbowStart = [], rainbowCount = [];
+  const SWAG = [7, 6, 5, 4, 3, 3], HTURN = [2, 2, 1, 1, 1, 1], HUE0 = [40, 200, 300, 120, 20, 180];
+  const hf = 1 - FFLOOR;
+  function onTime(f, a) {
+    const sl = (1 - f) / hf;
+    let best = 9;
+    for (let c = 0; c < 2; c++) {
+      let d = a - COMET_A0 - c * Math.PI;
+      d = d - Math.floor(d / TAU) * TAU;
+      const base = d / (8 * Math.PI);
+      const s = base + 0.25 * Math.max(0, Math.ceil((sl - base) / 0.25));
+      if (s < best) best = s;
+    }
+    return 6.25 + 3 * Math.min(best, 0.84);
+  }
+  for (let k = 0; k < 6; k++) {
+    const nb = Math.max(8, Math.round(TAU * tR[k] * TR / 2.1));
+    rainbowStart.push(B.length); rainbowCount.push(nb);
+    for (let j = 0; j < nb; j++) {
+      const a = (j + 0.5) / nb * TAU;
+      lobeAt(k, a);
+      const dr = tDroop[k] * LDR[k][lobeI] * (0.5 + 0.5 * lobeShape);
+      const keep = h2(k + 3, Math.floor(j / 6) + 40) >= 0.04;
+      /* the string hangs in swags between the branch tips, and its colour walks round the colour wheel,
+         so neighbouring bulbs are always neighbouring colours */
+      const drape = Math.sin(Math.PI * fract(a / TAU * SWAG[k] + k * 0.37));
+      const fy = tFb[k] - dr * 0.5 + 0.006 - 0.03 * drape + 0.008 * Math.sin(a * 2 + k * 1.3);
+      const hue = (HUE0[k] + a / TAU * 360 * HTURN[k] + 16 * (h2(k * 31 + 5, j * 3 + 1) - 0.5) + 720) % 360;
+      B.push({ k: k, a: a, r: tR[k] * TR * edgeF(k) + 0.3, fy: fy, keep: keep, gold: 0,
+        hue: hue, on: onTime(fy, a), sp: TAU / nb });
+    }
+    const ng = Math.max(5, Math.round(nb * 0.6));
+    for (let j = 0; j < ng; j++) {
+      const a = (j + 0.5) / ng * TAU + 0.013;
+      lobeAt(k, a);
+      const dr = tDroop[k] * LDR[k][lobeI] * (0.5 + 0.5 * lobeShape);
+      const keep = h2(k + 11, Math.floor(j / 4) + 90) >= 0.18;
+      /* the second strand crosses the first: its swags fall where the first one is pinned up */
+      const drape = Math.sin(Math.PI * fract(a / TAU * SWAG[k] + k * 0.37 + 0.5));
+      const fy = tFb[k] - dr * 0.5 + 0.012 - 0.024 * drape;
+      const hue = (HUE0[k] + a / TAU * 360 * HTURN[k] + 38 + 720) % 360;
+      B.push({ k: k, a: a, r: tR[k] * TR * edgeF(k) * 0.95, fy: fy, keep: keep, gold: 1,
+        hue: hue, on: onTime(fy, a), sp: TAU / ng });
+    }
+  }
+  NBULB = B.length;
+  bOn = new Float32Array(NBULB); bHue = new Float32Array(NBULB); bPh = new Float32Array(NBULB);
+  bSpd = new Float32Array(NBULB); bGl = new Uint8Array(NBULB); bCol = new Uint32Array(NBULB); bCh = new Uint8Array(NBULB);
+  bAng = new Float32Array(NBULB); bRad = new Float32Array(NBULB); bFy = new Float32Array(NBULB);
+  bTier = new Uint8Array(NBULB); bGold = new Uint8Array(NBULB);
+  const bulbGl = [c_at, c_o, c_star, c_0];
+  const keptR = [], keptG = [];
+  for (let i = 0; i < NBULB; i++) {
+    const b = B[i];
+    bOn[i] = b.on; bHue[i] = b.hue; bPh[i] = rng() * TAU; bSpd[i] = 1.6 + 3.2 * rng();
+    bGl[i] = bulbGl[Math.floor(rng() * 4)];
+    bAng[i] = b.a; bRad[i] = b.r; bFy[i] = b.fy; bTier[i] = b.k; bGold[i] = b.gold;
+    if (b.keep) { if (b.gold) keptG.push(i); else keptR.push(i); }
+  }
+  for (let i = 0; i < NL; i++) {
+    const gold = rng() < 0.34;
+    const list = gold ? keptG : keptR;
+    const bi = list[Math.floor(rng() * list.length)];
+    const b = B[bi];
+    const a = b.a + (rng() - 0.5) * 0.5 * b.sp;
+    lB[i] = bi;
+    lR[i] = b.r + (rng() - 0.5) * 0.5;
+    lSin[i] = Math.sin(a); lCos[i] = Math.cos(a);
+    lFy[i] = b.fy + (rng() - 0.5) * 0.024;
+  }
+
+  /* body point cloud */
+  const tw = [];
+  let tws = 0;
+  for (let k = 0; k < 6; k++) { const w = Math.pow(tR[k] * (tFt[k] - tFb[k]), 0.85); tw.push(w); tws += w; }
+  const aR = new Float32Array(NB), aS = new Float32Array(NB), aC = new Float32Array(NB), aF = new Float32Array(NB);
+  const aD = new Float32Array(NB), aT = new Float32Array(NB), aB = new Uint8Array(NB), aFr = new Uint8Array(NB);
+  const aHv = new Uint8Array(NB), aGj = new Int8Array(NB), aTc = new Uint32Array(NB), aTt = new Float32Array(NB);
+  const aTs = new Uint8Array(NB);
+  for (let i = 0; i < NB; i++) {
+    let pick = rng() * tws, k = 0;
+    while (k < 5 && pick > tw[k]) { pick -= tw[k]; k++; }
+    const a = rng() * TAU;
+    lobeAt(k, a);
+    const ef = edgeF(k), lbr = LBR[k][lobeI], ldr = LDR[k][lobeI], shp = lobeShape;
+    const core = rng() < 0.3;
+    let u, q, b, j = 0, v = 0, frost = 0;
+    if (core) {
+      u = rng() * 0.97;
+      q = Math.sqrt(rng()) * 0.7;
+      b = 0.04 + 0.1 * rng();
+    } else {
+      const rr = rng();
+      j = rr < 0.34 ? 0 : rr < 0.62 ? 1 : rr < 0.83 ? 2 : 3;
+      v = rng() * 2 - 1;
+      u = clamp(0.12 + j * 0.215 + v * 0.115, 0, 0.99);
+      q = 1 - Math.pow(rng(), 1.7) * 0.7;
+      let shade;
+      if (k === 5) shade = lerp(1, 0.6, u);
+      else shade = u < 0.42 ? 1 : lerp(1, 0.14, smooth((u - 0.42) / 0.3));
+      const nst = Math.max(12, Math.round(TAU * tR[k] * TR / 2.2));
+      const st = 0.74 + 0.36 * h2(k * 7 + 1, Math.floor(a / TAU * nst));
+      b = (0.2 + 0.8 * Math.pow(q, 2.4)) * shade * st * lbr * (1.06 - 0.24 * (v + 1)) * (0.9 + 0.2 * rng()) *
+        (0.86 + 0.28 * h2(k * 5 + 2, Math.floor(a / TAU * nst * 1.7) * 31 + Math.floor(u * 14)));
+      q *= 1 - 0.06 * v;
+      if (q > 0.8 && u < 0.8) {
+        const nfine = Math.max(10, Math.round(TAU * tR[k] * TR / 0.9));
+        const pv = h2(k * 17 + 3, Math.floor(a / TAU * nfine) * 13 + Math.floor(u * 26));
+        frost = (0.12 + 0.88 * pv) * (u < 0.22 ? 1 : lerp(1, 0.25, clamp01((u - 0.22) / 0.4))) * (0.6 + 0.4 * shp);
+      }
+      if (u < 0.32 && q > 0.55) {
+        const nb = rainbowCount[k];
+        const bi = rainbowStart[k] + Math.min(nb - 1, Math.floor(a / TAU * nb));
+        const st2 = Math.pow(1 - u / 0.32, 1.3) * smooth((q - 0.55) / 0.3) * (B[bi].keep ? 0.72 : 0.2);
+        aTc[i] = hsl(B[bi].hue, 0.52, 0.64); aTt[i] = B[bi].on + 0.15; aTs[i] = Math.round(st2 * 255);
+      }
+    }
+    const f = tFb[k] + u * (tFt[k] - tFb[k]);
+    const r = q * tR[k] * TR * prof(k, u) * ef;
+    aR[i] = r; aS[i] = Math.sin(a); aC[i] = Math.cos(a); aF[i] = f;
+    aD[i] = tDroop[k] * ldr * (0.5 + 0.5 * shp) * q * q * (core ? 0.5 : 1);
+    aT[i] = tPassOf(f);
+    aB[i] = clamp(Math.round(b * 255), 0, 255);
+    aFr[i] = Math.round(frost * 255);
+    aHv[i] = Math.floor(rng() * 8);
+    const gj = rng();
+    aGj[i] = gj < 0.07 ? -1 : gj < 0.14 ? 1 : 0;
+  }
+  const order = new Uint32Array(NB);
+  for (let i = 0; i < NB; i++) order[i] = i;
+  order.sort((x, y) => aT[x] - aT[y]);
+  const re = (src, Ctor) => { const d = new Ctor(NB); for (let i = 0; i < NB; i++) d[i] = src[order[i]]; return d; };
+  pR = re(aR, Float32Array); pSin = re(aS, Float32Array); pCos = re(aC, Float32Array); pF = re(aF, Float32Array);
+  pDr = re(aD, Float32Array); pT = re(aT, Float32Array); pB = re(aB, Uint8Array); pFr = re(aFr, Uint8Array);
+  pHv = re(aHv, Uint8Array); pGj = re(aGj, Int8Array); pTintC = re(aTc, Uint32Array); pTintT = re(aTt, Float32Array);
+  pTintS = re(aTs, Uint8Array);
+
+  /* red baubles hanging under each rim */
+  const nBa = [5, 4, 4, 3, 3, 2];
+  for (let k = 0; k < 6; k++) {
+    for (let i = 0; i < nBa[k]; i++) {
+      const a = (i + rng() * 0.6) / nBa[k] * TAU + k * 0.7;
+      lobeAt(k, a);
+      const dr = tDroop[k] * LDR[k][lobeI] * (0.5 + 0.5 * lobeShape);
+      baubles.push({ s: Math.sin(a), c: Math.cos(a), r: tR[k] * TR * edgeF(k) * 0.9, fy: tFb[k] - dr * 0.81 - 0.012,
+        t: tPassOf(tFb[k]) + 0.15 });
+    }
+  }
+}
+
+/* snow */
+const NSNOW = 1200;
+const snX = new Float32Array(NSNOW), snY = new Float32Array(NSNOW), snV = new Float32Array(NSNOW);
+const snW = new Float32Array(NSNOW), snP = new Float32Array(NSNOW), snC = new Uint32Array(NSNOW);
+const EXN = 700;
+const exX = new Float32Array(EXN), exY = new Float32Array(EXN), exT = new Float32Array(EXN).fill(-1);
+const exV = new Float32Array(EXN), exC = new Uint32Array(EXN);
+let exHead = 0, snowAcc = 0;
+let snowSeen = -9, snowRate = 0, snowU = 0.5, snowVv = 0.1;
+
+/* impact sparks, ring sparks, dust */
+const NBURST = 80;
+const buA = new Float32Array(NBURST), buVr = new Float32Array(NBURST), buVy = new Float32Array(NBURST), buL = new Float32Array(NBURST);
+const NSPK = 54;
+const spP = new Float32Array(NSPK), spO = new Float32Array(NSPK), spH = new Float32Array(NSPK);
+const NDUST = 170;
+const duA = new Float32Array(NDUST), duF = new Float32Array(NDUST), duW = new Float32Array(NDUST), duV = new Float32Array(NDUST);
+const duR = new Float32Array(NDUST), duH = new Float32Array(NDUST), duC = new Uint8Array(NDUST);
+const NMOTE = 12;
+const moA = new Float32Array(NMOTE), moP = new Float32Array(NMOTE);
+
+function genMisc() {
+  const rng = mulberry(777);
+  for (let i = 0; i < NSNOW; i++) {
+    const d = rng();
+    snX[i] = rng(); snY[i] = rng(); snV[i] = 0.015 + 0.035 * d;
+    snW[i] = 0.3 + 0.7 * rng(); snP[i] = rng() * TAU;
+    snC[i] = rgba(248, 250, 255, 0.22 + 0.78 * Math.pow(d, 1.5));
+  }
+  for (let i = 0; i < NBURST; i++) {
+    buA[i] = rng() * TAU; buVr[i] = 5 + 34 * rng(); buVy[i] = 30 + 62 * rng(); buL[i] = 0.5 + 0.45 * rng();
+  }
+  for (let i = 0; i < NSPK; i++) { spP[i] = 0.7 + 0.5 * rng(); spO[i] = rng(); spH[i] = rng(); }
+  for (let i = 0; i < NDUST; i++) {
+    duA[i] = rng() * TAU; duF[i] = rng(); duW[i] = 0.12 + 0.4 * rng(); duV[i] = 0.018 + 0.035 * rng();
+    duR[i] = rng(); duH[i] = rng();
+    const c = rng();
+    duC[i] = c < 0.6 ? c_dot : c < 0.88 ? c_plus : c_star;
+  }
+  for (let i = 0; i < NMOTE; i++) {
+    const front = i % 2 === 0;
+    moA[i] = (front ? 0 : Math.PI) + (rng() - 0.5) * 1.1;
+    moP[i] = rng();
+  }
+}
+
+/* gifts: each one is its own small point cloud */
+const GIFTS = [
+  { w: 13, h: 13, d: 13, px: 45, pz: 12, hue: 356, sat: 0.5, lmul: 1, rh: 44, rs: 0.34 },
+  { w: 8, h: 8, d: 8, px: 55, pz: -16, hue: 42, sat: 0.5, lmul: 0.96, rh: 350, rs: 0.4 },
+  { w: 15, h: 6.5, d: 11, px: -45, pz: 15, hue: 152, sat: 0.36, lmul: 0.97, rh: 44, rs: 0.34 },
+  { w: 6.5, h: 15, d: 6.5, px: -55, pz: -12, hue: 214, sat: 0.46, lmul: 1.03, rh: 44, rs: 0.34 },
+  { w: 10, h: 10, d: 9, px: 39, pz: -26, hue: 326, sat: 0.42, lmul: 1, rh: 44, rs: 0.34 }
+];
+const GPN = 2400;
+const gfOx = new Float32Array(GPN * 5), gfOz = new Float32Array(GPN * 5), gfH = new Float32Array(GPN * 5);
+const gfFace = new Uint8Array(GPN * 5), gfType = new Uint8Array(GPN * 5), gfRnd = new Uint8Array(GPN * 5);
+const SIDE_ANG = [0, Math.PI / 2, -Math.PI / 2, 0, Math.PI];
+const gShade = new Float32Array(5);
+const gColB = new Uint32Array(5 * 12), gColR = new Uint32Array(10);
+const GIFT_LM = [0.86, 0.94, 1.0, 1.07];
+
+function genGifts() {
+  const rng = mulberry(4242);
+  const slot = [0, 3, 1, 4, 2];
+  for (let g = 0; g < 5; g++) {
+    const G = GIFTS[g];
+    G.ang = 0.55 + slot[g] * TAU / 5 + (rng() - 0.5) * 0.25;
+    G.yaw = 0.35 + (rng() - 0.5) * 0.5;
+    G.ang0 = Math.atan2(G.px, G.pz);
+    G.distC = Math.sqrt(G.px * G.px + G.pz * G.pz);
+    const cy = Math.cos(G.yaw), sy = Math.sin(G.yaw);
+    const aTop = G.w * G.d, aX = G.d * G.h, aZ = G.w * G.h, tot = aTop + 2 * aX + 2 * aZ;
+    const rw = Math.max(0.75, 0.11 * Math.min(G.w, G.d));
+    for (let i = 0; i < GPN; i++) {
+      let lx, ly, lz, face, type = 0;
+      const pk = rng();
+      if (pk < 0.07) {
+        const side = rng() < 0.5 ? -1 : 1, t = rng() * TAU, bw = Math.min(G.w, G.d) * 0.26, rr = 0.55 + 0.45 * rng();
+        lx = side * bw * (0.55 + 0.5 * rr * Math.cos(t));
+        ly = G.h + bw * 0.55 * (0.95 + rr * Math.sin(t));
+        lz = (rng() - 0.5) * 0.8;
+        face = 0; type = 4;
+      } else {
+        const p = rng() * tot;
+        if (p < aTop) {
+          lx = (rng() - 0.5) * G.w; lz = (rng() - 0.5) * G.d; ly = G.h; face = 0;
+          if (Math.abs(lx) < rw) type = 2; else if (Math.abs(lz) < rw) type = 3;
+        } else if (p < aTop + 2 * aX) {
+          const sgn = p < aTop + aX ? 1 : -1;
+          lx = sgn * G.w / 2; lz = (rng() - 0.5) * G.d; ly = rng() * G.h; face = sgn > 0 ? 1 : 2;
+          if (Math.abs(lz) < rw) type = 1;
+        } else {
+          const sgn = p < aTop + 2 * aX + aZ ? 1 : -1;
+          lz = sgn * G.d / 2; lx = (rng() - 0.5) * G.w; ly = rng() * G.h; face = sgn > 0 ? 3 : 4;
+          if (Math.abs(lx) < rw) type = 1;
+        }
+      }
+      const o = g * GPN + i;
+      gfOx[o] = lx * cy + lz * sy; gfOz[o] = -lx * sy + lz * cy; gfH[o] = ly;
+      gfFace[o] = face; gfType[o] = type; gfRnd[o] = Math.floor(rng() * 256);
+    }
+  }
+}
+
+/* ============================== drawing: snow, start screen ============================== */
+function drawSnow() {
+  const n = Math.min(NSNOW, Math.round(230 * gcols / COLS));
+  for (let i = 0; i < n; i++) {
+    const yy = fract(snY[i] + snV[i] * tReal) * rows - 0.5;
+    const x = snX[i] * gcols - 0.5 + Math.sin(tReal * snW[i] + snP[i]) * 0.7;
+    /* a flake is shared between the two rows it lies across, so it glides down instead of hopping */
+    const y0 = Math.floor(yy), fy = smooth((yy - y0 - 0.3) / 0.4), c = snC[i], al = c >>> 24, rgb = c & 0xffffff;
+    const ch = snV[i] < 0.027 ? c_dot : snV[i] < 0.045 ? c_plus : c_star;
+    if (fy < 0.97) put(x, y0, ch, (rgb | (((al * (1 - fy)) | 0) << 24)) >>> 0, -1000);
+    if (fy > 0.03) put(x, y0 + 1, ch, (rgb | (((al * fy) | 0) << 24)) >>> 0, -1000);
+  }
+  for (let i = 0; i < EXN; i++) {
+    if (exT[i] < 0) continue;
+    const y = exY[i] + exV[i] * rows * (tReal - exT[i]);
+    if (y > rows + 1) { exT[i] = -1; continue; }
+    put(exX[i], y, c_plus, exC[i], -999);
+  }
+}
+function emitSnow(dt) {
+  const now = performance.now() / 1000;
+  if (now - snowSeen > 1.2 || snowRate <= 0) { snowAcc = 0; return; }
+  snowAcc += snowRate * dt;
+  while (snowAcc >= 1) {
+    snowAcc -= 1;
+    const i = exHead; exHead = (exHead + 1) % EXN;
+    exX[i] = extra + snowU * COLS + (Math.random() - 0.5) * 10;
+    exY[i] = snowVv * rows - 2 - Math.random() * 3;
+    exT[i] = tReal;
+    const d = Math.random();
+    exV[i] = 0.05 + 0.07 * d;
+    exC[i] = rgba(248, 250, 255, 0.45 + 0.55 * d);
+  }
+}
+
+const PLAY_FONT = [
+  ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+  ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
+  ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+  ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..']
+];
+function drawPlay() {
+  const px = 3, py = 2, gap = 3;
+  const totalW = 4 * 5 * px + 3 * gap;
+  const x0 = Math.round(cxc - totalW / 2 + 0.5), y0 = Math.round(rows * 0.47 - 7 * py / 2);
+  const tk = Math.floor(tReal * 7);
+  for (let l = 0; l < 4; l++) {
+    const gl = PLAY_FONT[l];
+    for (let r = 0; r < 7; r++) {
+      for (let c = 0; c < 5; c++) {
+        if (gl[r].charCodeAt(c) !== 35) continue;
+        for (let dy = 0; dy < py; dy++) {
+          for (let dx = 0; dx < px; dx++) {
+            const x = x0 + l * (5 * px + gap) + c * px + dx, y = y0 + r * py + dy;
+            const h = h3(x, y, tk);
+            const ch = h < 0.72 ? c_hash : h < 0.86 ? c_at : h < 0.95 ? c_pct : c_plus;
+            const L = 0.8 + 0.17 * Math.sin(tReal * 2.2 + x * 0.21 + y * 0.37);
+            put(x, y, ch, hsl(44, 0.3, L), 10);
+          }
+        }
+      }
+    }
+  }
+}
+
+/* ============================== drawing: light, disc, trunk ============================== */
+function drawFallingLight() {
+  if (T < 0.05 || T >= 0.39) return;
+  const p = (T - 0.05) / 0.34;
+  const y = Math.round(lerp(-2, floorRow, p * p)), x = Math.round(cxc);
+  put(x, y, c_at, hsl(44, 0.5, 0.96), 60);
+  for (let j = 1; j <= 22; j++) {
+    put(x, y - j, j < 8 ? c_hash : c_pipe, hsl(42, 0.65, 0.86, Math.pow(1 - j / 23, 1.2)), 59);
+  }
+  addHalo(x, y, 6, 0.55, hsl(44, 0.5, 0.9));
+}
+
+/* ---- the heart magic circle ----
+   white light on the snow. One large heart lies around the trunk, point toward the viewer, drawn as nested outlines;
+   on every heartbeat two waves of light leave the trunk and run outward along those nested hearts.
+   Around it: a sunburst of fine rays, a band that carries a procession of small hearts, and a double rim.
+   The lines send a faint curtain of light upward, so the circle looks lit from within.
+   It runs off both sides of the portrait stage on purpose, so it reads as a floor. */
+const RD = 0.8 * COLS, NCHARM = 18;
+let stageFlashT = -99, landReal = -99;
+const HRT = new Float32Array(722);
+let heartR = 1;
+(function () {
+  for (let i = 0; i < 8000; i++) {
+    const t = i / 8000 * TAU, s = Math.sin(t);
+    const px = 16 * s * s * s, py = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+    let a = Math.atan2(px, py);
+    if (a < 0) a += TAU;
+    const b = Math.round(a / TAU * 720) % 720, r = Math.sqrt(px * px + py * py);
+    if (r > HRT[b]) HRT[b] = r;
+  }
+  for (let i = 0; i < 720; i++) if (HRT[i] === 0) HRT[i] = HRT[(i + 719) % 720] || 5;
+  HRT[720] = HRT[0]; HRT[721] = HRT[1];
+})();
+/* how far out a point lies on the heart: 1 on the outline, less inside */
+function heartK(ux, uy) {
+  let a = Math.atan2(ux, uy);
+  if (a < 0) a += TAU;
+  const p = a / TAU * 720, i = p | 0;
+  heartR = HRT[i] + (HRT[i + 1] - HRT[i]) * (p - i);
+  return Math.sqrt(ux * ux + uy * uy) / heartR;
+}
+
+function drawDisc(rot) {
+  const tau = T - 0.39;
+  if (tau < 0) return;
+  const spread = RD * 1.06 * easeOutCubic(tau / 1.0);
+  const y0 = Math.max(0, Math.ceil(floorRow - RD * ftilt)), y1 = Math.min(rows - 1, Math.floor(floorRow + RD * ftilt));
+  const x0 = Math.max(0, Math.ceil(cxc - RD)), x1 = Math.min(gcols - 1, Math.floor(cxc + RD));
+  const landF = Math.exp(-Math.max(0, tReal - landReal) * 2.6) * (tReal >= landReal ? 1 : 0);
+  const sAge = tReal - stageFlashT;
+  const sflash = sAge >= 0 ? Math.exp(-sAge * 2.4) : 0, sRing = sAge * 120;
+  const settled = smooth((tau - 0.9) / 0.6);
+  const igniteK = tau < 1.7 ? 1 - tau / 1.7 : 0;
+  const bp = fract(tReal / 1.7), bp2 = fract(tReal / 1.7 - 0.17);
+  const kw1 = bp * 1.25, kw2 = bp2 * 1.25, ka1 = (1 - bp) * settled, ka2 = (1 - bp2) * 0.7 * settled;
+  const beat = (Math.exp(-Math.pow((bp - 0.04) / 0.05, 2)) + 0.7 * Math.exp(-Math.pow((bp - 0.21) / 0.06, 2))) * settled;
+  const sweepA = tReal * 0.45, tk = Math.floor(tReal * 6), tk2 = Math.floor(tReal * 3);
+  const r1 = RD * clamp01(tau / 0.6), r2 = RD * clamp01((tau - 0.15) / 0.6), r3 = RD * clamp01((tau - 0.3) / 0.6);
+  const rowTol = 0.5 / ftilt;
+  const HSX = 1.8, HSY = 1.1 * AR, hRow = floorRow + 1.5;
+  for (let y = y0; y <= y1; y++) {
+    const dz = (y - floorRow) / ftilt;
+    const uy = -(y - hRow) / HSY;
+    for (let x = x0; x <= x1; x++) {
+      const dx = x - cxc, d = Math.sqrt(dx * dx + dz * dz);
+      if (d > RD || d > spread) continue;
+      const rho = d / RD, inv = 1 / (d + 0.001);
+      const tol = Math.abs(dz) * inv * rowTol / RD, tolL = Math.abs(dx) * inv * rowTol * 0.6;
+      const ths = Math.atan2(dx, dz);
+      let ch = 0, L = 0, hue = 218, S = 0.16, al = 1, kind = 0;
+      if (rho >= 0.957 - tol * 0.3) { ch = c_hash; L = 0.86; kind = 1; }
+      else if (Math.abs(rho - 0.93) < 0.006 + tol * 0.45) { ch = c_eq; L = 0.72; kind = 2; }
+      else if (Math.abs(rho - 0.812) < 0.005 + tol * 0.45) { ch = c_eq; L = 0.76; kind = 2; }
+      else if (rho > 0.812 && rho < 0.93) {
+        /* between the small hearts: a diamond and two dots */
+        const tb = (ths + rot * 0.5) * NCHARM / TAU, s = tb - Math.round(tb);
+        const lat = Math.abs(s) * TAU / NCHARM * d, rad = Math.abs(d - RD * 0.871);
+        if (lat / 2.6 + rad / (2.2 + tol * RD) < 1) { ch = c_plus; L = 0.78; kind = 2; }
+        else if (Math.abs(lat - 6) < 0.8 && rad < 1 + tol * RD * 0.7) { ch = c_dot; L = 0.7; kind = 2; }
+      } else {
+        const ux = dx / HSX;
+        const k = heartK(ux, uy);
+        const hr = Math.sqrt(ux * ux + uy * uy) + 0.001;
+        const tolK = 0.5 * (Math.abs(ux) / hr / HSX + Math.abs(uy) / hr / HSY) / heartR;
+        if (Math.abs(k - 1) < tolK * 1.45) { ch = c_at; L = 0.95; kind = 3; }
+        else if (k < 1) {
+          if (Math.abs(k - 0.86) < tolK * 0.9) { ch = c_hash; L = 0.8; kind = 4; }
+          else if (Math.abs(k - 0.64) < tolK * 0.8) { if ((x & 1) === 0) { ch = c_plus; L = 0.88; kind = 4; } }
+          else if (Math.abs(k - 0.4) < tolK * 0.8) { ch = c_colon; L = 0.86; kind = 4; }
+          else if (k < 0.16) { ch = c_star; L = 0.86; kind = 4; }
+          else if (((x + y * 2) & 3) === 0) { ch = c_dot; L = 0.8; al = 0.5; kind = 5; }
+          /* the heartbeat: two waves run outward along the nested hearts */
+          let wv = 0;
+          const w1 = Math.abs(k - kw1), w2 = Math.abs(k - kw2);
+          if (w1 < 0.09) wv = (1 - w1 / 0.09) * ka1;
+          if (w2 < 0.09) { const v = (1 - w2 / 0.09) * ka2; if (v > wv) wv = v; }
+          if (wv > 0.05) {
+            if (!ch || kind === 5) { if (((x + y) & 1) === 0 || wv > 0.6) { ch = wv > 0.6 ? c_star : c_colon; L = 0.72; al = 1; kind = 4; } }
+            L += 0.24 * wv;
+          }
+        } else if (rho < 0.8) {
+          /* sunburst: long and short rays by turns, and two fine dotted circles */
+          /* a dotted echo of the heart just outside its outline */
+          if (Math.abs(k - 1.15) < tolK * 0.7) { if ((x & 1) === 0) { ch = c_colon; L = 0.84; kind = 6; } }
+          const tb = (ths - rot * 0.25) * 60 / TAU, rb = Math.round(tb), s = tb - rb;
+          const lat = Math.abs(s) * TAU / 60 * d;
+          if (kind) { kind = 6; }
+          else if (lat < 0.55 + tolL * 0.45 && k > 1.24 && ((rb & 1) === 0 || rho > 0.62)) {
+            if ((rb & 3) === 0) { ch = c_colon; L = 0.86; } else { ch = c_dot; L = 0.8; }
+            kind = 6;
+          } else if (Math.abs(rho - 0.7) < 0.004 + tol * 0.4 && k > 1.08) { if ((x & 1) === 0) { ch = c_minus; L = 0.7; kind = 6; } }
+          else if (Math.abs(rho - 0.6) < 0.004 + tol * 0.4 && k > 1.08) { if ((x % 3) === 0) { ch = c_dot; L = 0.72; kind = 6; } }
+        }
+      }
+      if (kind) {
+        L *= 0.9 + 0.1 * (dz / RD);
+        if (kind === 1 || kind === 2) {
+          let dd = ths - sweepA;
+          dd -= Math.round(dd / TAU) * TAU;
+          L += settled * 0.14 * Math.max(0, 1 - Math.abs(dd) / 0.5);
+        } else if (kind === 3) {
+          L += 0.05 * beat;
+          if (h3(x, y, tk) < 0.03 * settled) { ch = c_star; L = 0.97; }
+        }
+        if (kind !== 5 && kind !== 7 && h3(x, y, tk2) < 0.006 * settled) { ch = c_star; L = 0.96; al = 1; }
+        L += 0.2 * landF + 0.16 * sflash;
+        if (sRing < RD * 1.1 && Math.abs(d - sRing) < 6) L += 0.22 * (1 - Math.abs(d - sRing) / 6);
+        if (igniteK > 0) L += 0.3 * igniteK * Math.exp(-(spread - d) / 18);
+      }
+      if (tau < 1.2) {
+        if (spread - d < 4) { ch = c_hash; L = 0.97; al = 1; kind = 8; }
+        else if (tau < 1) {
+          const tw = 1.6 + tol * RD * 0.6;
+          if ((r1 > 0 && r1 < RD * 0.99 && Math.abs(d - r1) < tw) || (r2 > 0 && r2 < RD * 0.99 && Math.abs(d - r2) < tw) ||
+              (r3 > 0 && r3 < RD * 0.99 && Math.abs(d - r3) < tw)) {
+            ch = c_hash; al = 1; kind = 8; L = Math.max(L, 0.66 + 0.3 * (1 - tau));
+          }
+        }
+      }
+      if (!ch) continue;
+      put(x, y, ch, hsl(hue, S, Math.min(0.975, L), al), -500);
+      /* the bright lines throw a thin curtain of light upward */
+      if ((kind === 3 || kind === 1) && settled > 0) {
+        const fl = 0.55 + 0.45 * h3(x, 3, tk2 + y);
+        put(x, y - 1, c_colon, hsl(218, 0.2, 0.94, 0.42 * settled * fl), -501);
+        put(x, y - 2, c_dot, hsl(218, 0.2, 0.94, 0.3 * settled * fl), -501);
+        if (fl > 0.75) put(x, y - 3, c_dot, hsl(218, 0.2, 0.94, 0.18 * settled), -501);
+      }
+    }
+  }
+  /* the procession of small hearts on the outer band; they stand upright so they stay readable */
+  const RB = RD * 0.871;
+  for (let k = 0; k < NCHARM; k++) {
+    const a = (k + 0.5) / NCHARM * TAU - rot * 0.5;
+    const hx = RB * Math.sin(a), hz = RB * Math.cos(a);
+    if (Math.abs(hx) > 68 || RB > spread) continue;
+    const cx = cxc + hx, cy = floorRow + hz * ftilt;
+    const s = 3.7 + 0.6 * Math.cos(a);
+    const lit = Math.max(0, Math.sin(tReal * 2.4 - k * TAU / NCHARM * 3));
+    const Lh = (0.86 + 0.08 * Math.cos(a)) + 0.12 * lit * settled + 0.2 * landF + 0.14 * sflash;
+    const ya = Math.floor(cy - 2.6), yb = Math.ceil(cy + 2.6), xa = Math.floor(cx - s - 1), xb = Math.ceil(cx + s + 1);
+    for (let yy = ya; yy <= yb; yy++) {
+      const vy = -(yy - cy) / AR * 16 / s - 2.5;
+      for (let xx = xa; xx <= xb; xx++) {
+        const k2 = heartK((xx - cx) * 16 / s, vy);
+        if (k2 > 1.04) continue;
+        if (k2 > 0.5) put(xx, yy, c_at, hsl(218, 0.14, Math.min(0.98, Lh)), -499);
+        else put(xx, yy, c_star, hsl(345, 0.45, Math.min(0.975, Lh - 0.06)), -499);
+      }
+    }
+  }
+  addHalo(cxc, floorRow + 2, 30, (0.1 + 0.07 * beat) * settled, hsl(218, 0.25, 0.94));
+  if (landF > 0.05) addHalo(cxc, floorRow, 22, 0.5 * landF, hsl(216, 0.3, 0.92));
+}
+
+function drawBurst() {
+  const tau = T - 0.39;
+  if (tau < 0 || tau > 1) return;
+  if (tau < 0.5) addHalo(cxc, floorRow, 13, 0.75 * (1 - tau / 0.5), hsl(44, 0.6, 0.9));
+  for (let i = 0; i < NBURST; i++) {
+    const life = buL[i];
+    if (tau >= life) continue;
+    const g = 2 * buVy[i] / life;
+    const hgt = buVy[i] * tau - 0.5 * g * tau * tau;
+    const r = buVr[i] * tau;
+    const x = cxc + r * Math.sin(buA[i]), z = r * Math.cos(buA[i]);
+    const y = floorRow + z * ftilt - hgt * AR;
+    const p = tau / life;
+    put(x, y, p < 0.4 ? c_star : p < 0.75 ? c_plus : c_dot, hsl(44, 0.75, 0.92 - 0.22 * p, 1 - 0.5 * p * p), z + 2);
+  }
+}
+
+/* little <3 marks lift off the circle and drift upward */
+function drawMotes() {
+  if (T < 1.4) return;
+  const fade = smooth((T - 1.4) / 0.6);
+  for (let i = 0; i < NMOTE; i++) {
+    const cyc = tReal * (0.1 + 0.05 * moP[i]) + moP[i] * 7;
+    const n = Math.floor(cyc), p = cyc - n;
+    const a = h2(i, n) * TAU, R = 34 + 50 * h2(i + 40, n);
+    const zf = R * Math.cos(a);
+    const x = Math.round(cxc + R * Math.sin(a) + Math.sin(tReal * 0.8 + i) * 1.2);
+    const y = Math.round(floorRow + zf * ftilt - 1 - p * 11);
+    const col = hsl(345, 0.35, 0.94, Math.sin(Math.PI * p) * 0.9 * fade);
+    const z = zf > 0 ? 70 : -400;
+    put(x - 1, y, c_lt, col, z); put(x, y, c_3, col, z);
+  }
+}
+
+const TRUNK_GL = [c_hash, c_8, c_pct, c_at];
+function drawTrunk() {
+  if (T < 1.05) return;
+  const topRow = Math.round(baseRow - 0.07 * treeH), botRow = Math.round(floorRow);
+  const n = botRow - topRow + 1;
+  const p = clamp01((T - 1.05) / 0.45);
+  const vis = Math.min(n, Math.floor(p * n + 1e-6));
+  const cx = Math.round(cxc);
+  for (let i = 0; i < vis; i++) {
+    const y = botRow - i;
+    const halfW = 3.5 + 0.8 * (1 - i / n) + (i < 3 ? (3 - i) * 0.3 : 0);
+    const hw = Math.ceil(halfW);
+    for (let dx = -hw; dx <= hw; dx++) {
+      if (Math.abs(dx) > halfW) continue;
+      const u = dx / halfW;
+      const sh = Math.max(0, 1 - Math.pow((u + 0.3) / 0.95, 2));
+      let L = (0.1 + 0.2 * sh) * (0.78 + 0.44 * h2(cx + dx + 9, y * 3 + 1));
+      if (p < 1 && i >= vis - 2) L += 0.07;
+      const gk = i < 7 && T > 1.2 ? 1 - i / 7 : 0;
+      put(cx + dx, y, TRUNK_GL[Math.floor(h2(cx + dx, y) * 4)], hsl(24 - 4 * gk, 0.4 - 0.16 * gk, L + 0.12 * gk), 3 * (1 - u * u) + 0.5);
+    }
+  }
+}
+
+/* ============================== drawing: tree, baubles, lights ============================== */
+/* every cell shows the average of the points on its front surface, so the shading is smooth instead of noisy.
+   colour is built in layers: a green ramp that runs from teal shadow to warm highlight, a cool rim light on the
+   shadow side, frost, coloured light spilling from the nearby bulbs, the star's warm light at the top,
+   and a rose glow from the magic circle on the lowest branches */
+function drawTree(rot) {
+  if (T <= 2.1) return;
+  const cr = Math.cos(rot), sr = Math.sin(rot);
+  const gc = gcols, rw = rows, tH = treeH, bR = baseRow, cx = cxc + 0.5, tl = tilt, q4 = quality, Tn = treeT, Tl = T;
+  const dep = depA, cha = chA, cola = colA, dim = dimA;
+  const y0 = Math.max(0, Math.floor(tipRow - 3)), y1 = Math.min(rw - 1, Math.ceil(baseRow + 16));
+  const x0 = Math.max(0, Math.floor(cxc - 54)), x1 = Math.min(gc - 1, Math.ceil(cxc + 54));
+  if (y1 < y0 || x1 < x0) return;
+  for (let y = y0; y <= y1; y++) {
+    tZ.fill(-1e9, y * gc + x0, y * gc + x1 + 1);
+    tWs.fill(0, y * gc + x0, y * gc + x1 + 1);
+  }
+  /* when the star opens, a band of its light washes down the tree */
+  const washOn = Tl > 5.86 && Tl < 6.3, fw = 1.06 - (Tl - 5.88) / 0.34 * 1.2;
+  const starK = clamp01((Tl - 5.8) / 0.4) * (0.85 + 0.15 * Math.sin(tReal * 1.3));
+  let nProc = 0;
+  for (let i = 0; i < NB; i++) {
+    const age = Tn - pT[i];
+    if (age < 0) break;
+    nProc = i + 1;
+    qIdx[i] = -1;
+    if ((i & 3) >= q4) continue;
+    let ext = 1;
+    if (age < 0.25) { const e = 1 - age / 0.25; ext = 1 - e * e; }
+    const r = pR[i] * ext;
+    const sp = pSin[i] * cr + pCos[i] * sr, cp = pCos[i] * cr - pSin[i] * sr;
+    /* the far half of the tree is always hidden behind the near half */
+    if (cp < -0.12) continue;
+    const z = r * cp;
+    const x = Math.floor(cx + r * sp);
+    if (x < x0 || x > x1) continue;
+    const y = Math.floor(bR - (pF[i] - pDr[i] * ext * ext) * tH + z * tl + 0.5);
+    if (y < y0 || y > y1) continue;
+    const idx = y * gc + x;
+    if (z < dep[idx]) continue;
+    qIdx[i] = idx; qZ[i] = z; qSp[i] = sp; qCp[i] = cp; qExt[i] = age;
+    if (z > tZ[idx]) tZ[idx] = z;
+  }
+  /* second pass: only the points on the front surface are shaded */
+  for (let i = 0; i < nProc; i++) {
+    const idx = qIdx[i];
+    if (idx < 0) continue;
+    const z = qZ[i];
+    if (z < tZ[idx] - 2.2) continue;
+    const sp = qSp[i], cp = qCp[i], age = qExt[i];
+    const w = 0.5 - 0.5 * sp;
+    const light = 0.03 + 0.97 * w * Math.sqrt(w) + 0.04 * cp;
+    const b = pB[i] * 0.003921569;
+    let bb = b * (0.16 + 0.92 * light);
+    let fr = 0;
+    /* snow lies on a patch when its own level passes a threshold that drops toward the lit side */
+    if (pFr[i] !== 0 && w > 0.46) { const fd = (w - 0.46) * 1.5; if (pFr[i] * 0.003921569 > 1 - (fd > 0.66 ? 0.66 : fd)) fr = 1; }
+    let young = 0, mat = 1;
+    if (age < 0.6) {
+      mat = age <= 0.1 ? 0 : (age - 0.1) * 2;
+      const yb = 0.2 + 0.12 * b;
+      bb = yb + (bb - yb) * mat;
+      fr *= mat;
+      if (age < 0.3) young = 1 - age / 0.3;
+    }
+    if (washOn) {
+      const dw = Math.abs(pF[i] - fw);
+      if (dw < 0.1) { const k = 1 - dw / 0.1; bb += 0.4 * k; if (fr < 0.5 * k) fr = 0.5 * k; }
+    }
+    const dm = dim[idx];
+    bb *= dm; fr *= dm;
+    if (bb > 1) bb = 1;
+    const li = pHv[i] * 64 + ((bb * 63) | 0);
+    let r0 = gR[li], g0 = gG[li], b0 = gBl[li];
+    /* cool rim light on the shadow side */
+    if (sp > 0.4) {
+      const k = (sp - 0.4) * (1 - 0.75 * cp) * b * 0.28 * dm * mat;
+      r0 += 26 * k; g0 += 58 * k; b0 += 128 * k;
+    }
+    /* light spilling from the nearby bulbs */
+    const ts = pTintS[i];
+    if (ts !== 0 && Tl > pTintT[i]) {
+      let k = (Tl - pTintT[i]) * 2;
+      if (k > 1) k = 1;
+      k *= ts * 0.003921569 * dm;
+      const tc = pTintC[i];
+      r0 += (((tc >> 16) & 255) - r0) * k; g0 += (((tc >> 8) & 255) - g0) * k; b0 += ((tc & 255) - b0) * k;
+      if (bb < 0.6 * k) bb = 0.6 * k;
+    }
+    /* the star warms the top of the tree */
+    if (starK > 0 && pF[i] > 0.76) {
+      const k = (pF[i] - 0.76) * 1.7 * starK * dm * (0.4 + 0.6 * b);
+      r0 += (255 - r0) * k; g0 += (240 - g0) * k; b0 += (206 - b0) * k;
+    }
+    const band = bb;
+    if (tWs[idx] === 0) {
+      tRs[idx] = r0; tGs[idx] = g0; tBs[idx] = b0; tBd[idx] = band; tYg[idx] = young; tFs[idx] = fr; tWs[idx] = 1;
+    } else {
+      tRs[idx] += r0; tGs[idx] += g0; tBs[idx] += b0; tBd[idx] += band; tYg[idx] += young; tFs[idx] += fr; tWs[idx] += 1;
+    }
+  }
+  const glowRow = baseRow - 1, glowK = 0.07 + 0.02 * Math.sin(tReal * 3.7);
+  for (let y = y0; y <= y1; y++) {
+    /* the magic circle glows up onto the underside of the lowest branches */
+    const ug = y > glowRow ? Math.min(1, (y - glowRow) / 7) * glowK : 0;
+    for (let x = x0; x <= x1; x++) {
+      const idx = y * gc + x, ws = tWs[idx];
+      if (ws === 0) continue;
+      const inv = 1 / ws;
+      const snow = tFs[idx] * inv * dim[idx];
+      const gn = h2(x, y);
+      let gi = ((snow > 0.5 ? 0.72 + 0.3 * gn : tBd[idx] * inv + (gn - 0.5) * 0.36) * 4.999) | 0;
+      if (gi < 0) gi = 0; else if (gi > 4) gi = 4;
+      let rr = tRs[idx] * inv, gg = tGs[idx] * inv, bl = tBs[idx] * inv;
+      /* no two neighbouring cells are quite the same green */
+      const cn = 0.76 + 0.48 * h2(x * 5 + 11, y * 3 + 7);
+      rr *= cn; gg *= cn; bl *= cn;
+      if (snow > 0.5) {
+        const sv = h2(x * 7 + 3, y * 5 + 1);
+        if (sv < 0.26) { rr += (248 - rr) * 0.92; gg += (251 - gg) * 0.92; bl += (248 - bl) * 0.92; }
+        else if (sv < 0.56) { const k = 0.55 + 0.5 * sv; rr += (156 - rr) * k; gg += (232 - gg) * k; bl += (200 - bl) * k; }
+        else if (sv < 0.78) { const k = 0.2 + 0.7 * sv; rr += (204 - rr) * k; gg += (240 - gg) * k; bl += (172 - bl) * k; }
+        else { rr = rr * 1.2 + 14; gg = gg * 1.2 + 30; bl = bl * 1.2 + 20; }
+      }
+      else if (snow > 0.2) { const k = (snow - 0.2) * 0.9; rr += (214 - rr) * k; gg += (240 - gg) * k; bl += (226 - bl) * k; }
+      if (ug > 0) { const k = ug * dim[idx]; rr += (232 - rr) * k; gg += (238 - gg) * k; bl += (255 - bl) * k; }
+      dep[idx] = tZ[idx];
+      cha[idx] = tYg[idx] * inv > 0.5 ? c_hash : snow > 0.5 && gn < 0.22 ? c_8 : TREE_GLYPHS[gi];
+      /* new growth fades in rather than popping */
+      const fa = (255 * (1 - 0.82 * tYg[idx] * inv)) | 0;
+      cola[idx] = ((fa << 24) | ((rr > 255 ? 255 : rr) << 16) | ((gg > 255 ? 255 : gg) << 8) | (bl > 255 ? 255 : bl)) >>> 0;
+    }
+  }
+  /* a very rare white sparkle on the body */
+  const key = Math.floor(tReal * 7);
+  for (let s = 0; s < 3; s++) {
+    if (h2(key, s * 13 + 1) > 0.22) continue;
+    const i = Math.floor(h2(key + 5, s + 2) * NB);
+    if (T - pT[i] < 1.3) continue;
+    const sp = pSin[i] * cr + pCos[i] * sr, cp = pCos[i] * cr - pSin[i] * sr;
+    if (cp < 0.3) continue;
+    const z = pR[i] * cp, x = Math.floor(cx + pR[i] * sp), y = Math.floor(bR - (pF[i] - pDr[i]) * tH + z * tl + 0.5);
+    if (x < 0 || x >= gc || y < 0 || y >= rw) continue;
+    const idx = y * gc + x;
+    if (z >= dep[idx] - 1 && dim[idx] > 0.9) { cha[idx] = c_star; cola[idx] = WHITE; }
+  }
+}
+
+function drawBaubles(rot) {
+  if (T <= 2.1) return;
+  const cr = Math.cos(rot), sr = Math.sin(rot);
+  for (let i = 0; i < baubles.length; i++) {
+    const b = baubles[i];
+    const age = treeT - b.t;
+    if (age < 0) continue;
+    const sp = b.s * cr + b.c * sr, cp = b.c * cr - b.s * sr;
+    if (cp < -0.15) continue;
+    const z = b.r * cp + 1.5;
+    const drop = (easeOutBack(age / 0.5) - 1) * 5;
+    const x = Math.round(cxc + b.r * sp), y = Math.round(baseRow - b.fy * treeH + z * tilt + 1 + drop);
+    const w = 0.5 - 0.5 * sp;
+    const ci = y >= 0 && y < rows && x >= 0 && x < gcols ? dimA[y * gcols + x] : 1;
+    if (ci < 0.6) continue;
+    const L = (0.2 + 0.34 * w) * ci;
+    const c1 = hsl(354, 0.8, L + 0.06), c2 = hsl(354, 0.8, L);
+    put(x - 1, y, c_at, c1, z); put(x, y, c_at, c1, z); put(x + 1, y, c_at, c2, z);
+    put(x - 1, y + 1, c_at, c2, z); put(x, y + 1, c_O, hsl(354, 0.8, L + 0.12), z); put(x + 1, y + 1, c_at, hsl(354, 0.8, L * 0.8), z);
+    if (ci > 0.9) put(x - 1, y, c_star, rgba(255, 244, 240), z + 0.1);
+  }
+}
+
+const LIGHT_GL = [c_o, c_0, c_at, c_star, c_8, c_o, c_0, c_star];
+function drawLights(rot) {
+  if (T < 6.25) return;
+  const tk = Math.floor(tReal * 1.6);
+  for (let b = 0; b < NBULB; b++) {
+    const age = T - bOn[b];
+    if (age < 0) { bCol[b] = 0; continue; }
+    const fl = Math.exp(-age * 7);
+    const tw = 0.5 + 0.5 * Math.sin(tReal * bSpd[b] + bPh[b]);
+    let L = 0.7 + 0.07 * tw;
+    L += (0.95 - L) * fl;
+    bCol[b] = hsl(bHue[b], 0.6, L);
+    bCh[b] = fl > 0.45 ? c_at : bGl[b];
+  }
+  const cr = Math.cos(rot), sr = Math.sin(rot);
+  const gc = gcols, rw = rows, cx = cxc + 0.5;
+  for (let i = 0; i < NL; i++) {
+    const col = bCol[lB[i]];
+    if (col === 0) continue;
+    const sp = lSin[i] * cr + lCos[i] * sr, cp = lCos[i] * cr - lSin[i] * sr;
+    const z = lR[i] * cp + 0.8;
+    const x = Math.floor(cx + lR[i] * sp);
+    if (x < 0 || x >= gc) continue;
+    const y = Math.floor(baseRow - lFy[i] * treeH + z * tilt + 0.5);
+    if (y < 0 || y >= rw) continue;
+    const idx = y * gc + x;
+    if (z < depA[idx] || dimA[idx] < 0.97) continue;
+    depA[idx] = z; chA[idx] = bCh[lB[i]] === c_at ? c_at : LIGHT_GL[i & 7]; colA[idx] = col;
+  }
+}
+
+/* ============================== drawing: ring, star, comets ============================== */
+/* the growth ring: a fat, soft doughnut of light that rides on the growing top of the tree.
+   Colour runs along the ring, not across it: twice round the colour wheel in one turn, so on the far half it
+   goes green, butter, pink, violet from left to right and on the near half violet, pink, peach, green, teal.
+   The rows of the tube differ mainly in depth of tone: it is shaded like a real tube lit from above, dim on its
+   outer rows, white next to the hole on the far half and through the middle on the near half. Small ripples of
+   hue break the near half into shorter runs, and the whole pattern drifts round the ring all the time.
+   It opens wide around the foot of the tree and then draws in to the width of the growing top. */
+/* the ring's trail. Each copy stays at the height where it was left, so a ladder of them hangs below the rising
+   ring: the newest is a soft coloured band right under it, the older ones thin out into dots, widen and fade.
+   Their colours flow with the ring's. This is what joins one position of the ring to the next. */
+const TRAIL_N = 24, TRAIL_LIFE = 0.85;
+const trT = new Float32Array(TRAIL_N).fill(-99), trY = new Float32Array(TRAIL_N), trR = new Float32Array(TRAIL_N), trB = new Float32Array(TRAIL_N);
+let trHead = 0, trLast = -99;
+function drawRingTrail() {
+  if (T < 1.5) { if (trLast > -99) { trT.fill(-99); trLast = -99; } return; }
+  for (let k = 0; k < TRAIL_N; k++) {
+    const age = tReal - trT[k];
+    if (age < 0.03 || age >= TRAIL_LIFE) continue;
+    const p = age / TRAIL_LIFE, q = 1 - (1 - p) * (1 - p);
+    const R = trR[k] + 1 + 10 * q, eb = R * trB[k];
+    const yc = trY[k] + 1.1 * q;
+    const al = Math.pow(1 - p, 1.5) * 0.66;
+    const N = Math.ceil(TAU * R * 0.95);
+    /* band first, then every second cell, then every third */
+    const step = p < 0.22 ? 1 : p < 0.55 ? 2 : 3;
+    const ch = p < 0.22 ? c_hash : p < 0.55 ? c_colon : c_dot;
+    const wash = 0.25 + 0.6 * p;
+    for (let n = k % step; n < N; n += step) {
+      const th = n / N * TAU, cz = Math.cos(th), sx = Math.sin(th);
+      /* strongest at the two sides, where it shows against the sky; faint where it crosses the tree */
+      const side = 0.22 + 0.78 * sx * sx;
+      let hd = 323 + (th > Math.PI ? th - TAU : th) * 114.59 + tReal * 34;
+      hd = Math.floor(hd - Math.floor(hd / 360) * 360);
+      if (hd > 359) hd = 359;
+      const r = RING_LUT[hd * 3], g = RING_LUT[hd * 3 + 1], b = RING_LUT[hd * 3 + 2];
+      put(cxc + R * sx, yc + eb * cz, ch,
+        rgba(r + (232 - r) * wash, g + (236 - g) * wash, b + (250 - b) * wash, al * side), step === 1 ? R * cz + 0.5 : -300);
+    }
+  }
+}
+const RING_STOPS = [22, 240, 176, 138, 56, 236, 232, 168, 76, 160, 168, 108, 104, 132, 150, 96, 128, 118, 190, 128,
+  156, 112, 164, 148, 180, 140, 214, 214, 204, 120, 176, 226, 222, 124, 150, 228, 254, 150, 128, 222,
+  276, 196, 160, 232, 300, 176, 124, 170, 318, 214, 120, 176, 338, 232, 152, 186, 382, 240, 176, 138];
+const RING_LUT = new Uint8Array(360 * 3);
+(function () {
+  const n = RING_STOPS.length / 4;
+  for (let h = 0; h < 360; h++) {
+    const hh = h < 22 ? h + 360 : h;
+    let i = 0;
+    while (i < n - 2 && hh >= RING_STOPS[(i + 1) * 4]) i++;
+    const a = i * 4, b = a + 4, f = clamp01((hh - RING_STOPS[a]) / (RING_STOPS[b] - RING_STOPS[a]));
+    for (let c = 0; c < 3; c++) RING_LUT[h * 3 + c] = Math.round(lerp(RING_STOPS[a + 1 + c], RING_STOPS[b + 1 + c], f));
+  }
+})();
+function drawRing(F) {
+  if (T < 1.5) return;
+  const sk = clamp01((T - 5.6) / 0.16), shrink = sk * sk;
+  if (shrink >= 1) return;
+  /* the sweep: a bright head runs once round, from the far side through the left, the near side and the right;
+     the band behind the head starts thin and fills out to its full thickness */
+  const entX = (T - 1.5) / 0.3, ent = 1 - Math.pow(1 - clamp01(entX), 1.6);
+  const entL = entX < 1 ? ent : 1 + (entX - 1) * 0.9;
+  const act = T >= 2.1 ? 1 - shrink : 0;
+  const fr = lerp(Math.min(F + 0.075, 1.03), 1, shrink);
+  const rt = 0.234 * AR;
+  /* it is drawn almost as wide as the stage, then closes in on the growing top and stays a little wider than it */
+  const wide = 1 - smooth((T - 1.75) / 1.15);
+  const Rm = lerp(treeW(Math.min(1, fr)) + 4, 52.5, wide) * (1 - shrink) * (1 + 0.02 * Math.sin(tReal * 6.5)) + 0.01;
+  const rh = Math.min(6.6, 2.2 + Rm * 0.15) * (1 - 0.5 * shrink);
+  const R0 = Rm + rh;
+  const yr = baseRow - fr * treeH;
+  const eb = Math.max(0.6, Rm * rt), rv = Math.min(2.6, Math.max(eb * 0.5, Math.min(2.1, rh * 0.5)));
+  /* ten times a second the ring leaves a copy of its outline where it stands */
+  if (tReal < trLast) trLast = -99;
+  if (entX >= 1 && shrink <= 0 && tReal - trLast > 0.1) {
+    trLast = tReal;
+    trT[trHead] = tReal; trY[trHead] = yr; trR[trHead] = R0; trB[trHead] = (eb + rv) / R0;
+    trHead = (trHead + 1) % TRAIL_N;
+  }
+  const xa = Math.max(0, Math.floor(cxc - R0 - 3)), xb = Math.min(gcols - 1, Math.ceil(cxc + R0 + 3));
+  const ya = Math.max(0, Math.floor(yr - eb - rv - 2)), yb = Math.min(rows - 1, Math.ceil(yr + eb + rv + 2));
+  const kx = Rm / rh, ky = eb / rv, drift = tReal * 34, tkr = Math.floor(tReal * 5);
+  for (let y = ya; y <= yb; y++) {
+    const ny = (y - yr) / eb;
+    for (let x = xa; x <= xb; x++) {
+      const nx = (x - cxc) / Rm;
+      const E = Math.sqrt(nx * nx + ny * ny) + 1e-6;
+      const cs = nx / E, sn = ny / E;
+      /* signed position across the tube: 0 on its centre line, -1 on the inner edge, +1 on the outer edge */
+      const sd = (E - 1) * Math.sqrt(kx * kx * cs * cs + ky * ky * sn * sn);
+      const as = sd < 0 ? -sd : sd;
+      if (as > 1.5) continue;
+      const ang = Math.atan2(nx, ny);
+      let tp = 1, hot = 0;
+      if (entL < 1.25) {
+        let rel = ang - Math.PI;
+        if (rel < 0) rel += TAU;
+        const lead = entL * TAU - rel;
+        if (lead < 0) continue;
+        tp = 0.2 + 0.8 * smooth(lead / 1.3);
+        hot = Math.exp(-lead * 2.4);
+      }
+      const z = Rm * sn + 2;
+      const a2 = as / tp, s2 = sd / tp;
+      /* the far half is open toward the hole: only the outer part of the tube is drawn there */
+      const cut = sn < 0 ? lerp(-1.3, -0.08, smooth(-sn / 0.6)) : -1.3;
+      if (a2 < 1 && s2 > cut) {
+        /* the two ends of the ring break up into loose strokes instead of stopping at a hard edge */
+        const endF = smooth(((cs < 0 ? -cs : cs) - 0.8) / 0.18);
+        if (endF > 0 && h2(x * 7 + 1, (y >> 1) * 3 + 2) < endF * 0.55 * (0.3 + a2)) continue;
+        /* light from above; on the far half the side next to the hole faces the viewer and is lit too */
+        const up = Math.sqrt(1 - a2 * a2);
+        let bq = 0.58 * up + (0.07 - 0.13 * sn) * s2 * sn;
+        /* depth of tone changes from row to row and in slow patches along the ring */
+        bq += 0.07 * Math.sin(sd * 4.4 + ang * 3 + tReal * 0.9) + 0.05 * Math.sin(ang * 5 - tReal * 0.6);
+        const near = sn > 0 ? sn : 0;
+        let hd = 323 + ang * 114.59 + 24 * sd + drift + (14 + 30 * near) * Math.sin(ang * 6 + sd * 2.4 + tReal * 0.8) +
+          (6 + 16 * near) * Math.sin(ang * 11 - sd * 3.6 + 1.3 - tReal * 0.5);
+        hd = Math.floor(hd - Math.floor(hd / 360) * 360);
+        if (hd > 359) hd = 359;
+        const lum = Math.min(1.08, 0.5 + 0.84 * bq);
+        let r = RING_LUT[hd * 3] * lum, g = RING_LUT[hd * 3 + 1] * lum, b = RING_LUT[hd * 3 + 2] * lum;
+        /* soft pastel: every colour is pulled part of the way toward its own grey, then toward white;
+           the dim outer rows keep a little more of their colour so they do not turn muddy */
+        const mid = (r + g + b) / 3, kk = 0.7 + 0.2 * clamp01((0.34 - bq) * 2);
+        r = mid + (r - mid) * kk; g = mid + (g - mid) * kk; b = mid + (b - mid) * kk;
+        r += (240 - r) * 0.07; g += (240 - g) * 0.07; b += (246 - b) * 0.07;
+        /* only the near half turns white along its crest; the far half stays in colour */
+        const wk = smooth((bq - 0.5) / 0.2) * smooth((sn + 0.25) / 0.5);
+        r += (250 - r) * wk; g += (250 - g) * wk; b += (252 - b) * wk;
+        if (hot > 0.02) { r += (255 - r) * hot; g += (255 - g) * hot; b += (255 - b) * hot; }
+        if (r < 0) r = 0;
+        if (g < 0) g = 0;
+        if (b < 0) b = 0;
+        /* the rims fade out instead of ending on a hard row, so the ring glides as it rises */
+        const ea = Math.min(1, (1 - a2) * 3.4, (s2 - cut) * 3.4);
+        put(x, y, c_hash, rgba(r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b, 0.2 + 0.8 * ea), z);
+      } else {
+        /* loose light: dotted filaments fill the hole */
+        const hv = h2(x * 3 + 1, y * 7 + 2);
+        if (sd < 0 && hv < 0.46) {
+          const tw = 0.5 + 0.5 * Math.sin(tReal * (2 + 5 * hv) + hv * 40);
+          put(x, y, hv < 0.03 ? c_star : hv < 0.28 ? c_colon : c_dot, rgba(232, 236, 255, 0.2 + 0.6 * tw), z - 0.5);
+        }
+      }
+    }
+  }
+  if (entX < 1) {
+    const th = Math.PI + ent * TAU;
+    const x = cxc + Rm * Math.sin(th), z = Rm * Math.cos(th), y = yr + eb * Math.cos(th);
+    put(x, y, c_at, WHITE, z + 6); put(x - 1, y, c_at, WHITE, z + 6); put(x + 1, y, c_at, WHITE, z + 6);
+    put(x, y - 1, c_at, WHITE, z + 6); put(x, y + 1, c_at, WHITE, z + 6);
+    addHalo(x, y, 7, 0.6, WHITE);
+  }
+  if (act <= 0) return;
+  for (let i = 0; i < NSPK; i++) {
+    const cyc = tReal / spP[i] + spO[i];
+    const n = Math.floor(cyc), p = cyc - n, tt = p * spP[i];
+    const th = h2(i, n) * TAU, vr = 6 + 16 * h2(i + 99, n), vy = 10 + 22 * h2(i + 7, n);
+    const r = R0 + vr * tt, hgt = vy * tt - 27 * tt * tt;
+    const x = cxc + r * Math.sin(th), z = r * Math.cos(th), y = yr + z * rt - hgt * AR;
+    put(x, y, p < 0.35 ? c_star : p < 0.7 ? c_plus : c_dot, lightCol(rampHue(spH[i]), 0.82, (1 - p) * act), z + 2);
+  }
+  const wc = Math.max(3, treeW(Math.min(1, fr)));
+  for (let i = 0; i < 14; i++) {
+    const p = fract(tReal * (0.5 + 0.4 * h2(i, 3)) + i / 14);
+    const x = cxc + (h2(i, 5) - 0.5) * 1.2 * wc, y = yr + 2 - p * 10;
+    put(x, y, p < 0.5 ? c_plus : c_dot, rgba(245, 248, 255, Math.sin(Math.PI * p) * act), 60);
+  }
+}
+
+function drawStar() {
+  const sp = (T - 5.72) / 0.5;
+  if (sp <= 0) return;
+  const sx = Math.round(cxc), sy = Math.round(tipRow) - 2;
+  const breath = 0.5 + 0.5 * Math.sin(tReal * 1.3);
+  const gph = (tReal % 3.6) / 3.6;
+  const gl = gph < 0.1 ? Math.sin(Math.PI * gph / 0.1) : 0;
+  const flash = Math.exp(-(T - 5.72) * 6);
+  const L = Math.min(0.92, 0.7 + 0.08 * breath + 0.1 * gl + 0.2 * flash);
+  const gold = hsl(46, 0.3, Math.min(0.95, L + 0.08)), core = hsl(46, 0.2, 0.97);
+  const Z = 200;
+  if (sp < 0.22) {
+    put(sx - 1, sy, c_hash, gold, Z); put(sx, sy, c_at, core, Z); put(sx + 1, sy, c_hash, gold, Z);
+    addHalo(sx, sy, 7, 0.55, gold);
+    return;
+  }
+  const cg = clamp01((sp - 0.22) / 0.25);
+  const half = 1 + Math.round(cg);
+  for (let dx = -half; dx <= half; dx++) put(sx + dx, sy, Math.abs(dx) <= 1 ? c_at : c_hash, Math.abs(dx) <= 1 ? core : gold, Z + 1);
+  if (cg > 0.5) {
+    for (let dx = -1; dx <= 1; dx++) { put(sx + dx, sy - 1, c_hash, gold, Z + 1); put(sx + dx, sy + 1, c_hash, gold, Z + 1); }
+  }
+  /* the rays shoot out a little too far, then settle */
+  const rp = Math.max(0, easeOutBack((sp - 0.3) / 0.7));
+  const rpc = Math.min(1, rp);
+  const len = 8.5 * rp * (1 + 0.05 * breath + 0.15 * gl);
+  const tipC = hsl(46, 0.3, L, 0.7);
+  const nh = Math.round(len);
+  for (let i = 4; i < 4 + nh; i++) {
+    const last = i >= 4 + nh - 2;
+    const ch = last ? (i === 4 + nh - 1 ? c_dot : c_colon) : c_minus;
+    put(sx + i, sy, ch, last ? tipC : gold, Z); put(sx - i, sy, ch, last ? tipC : gold, Z);
+  }
+  const nv = Math.round(len * AR);
+  for (let i = 2; i < 2 + nv; i++) {
+    const last = i >= 2 + nv - 2;
+    const ch = last ? (i === 2 + nv - 1 ? c_dot : c_colon) : c_pipe;
+    put(sx, sy - i, ch, last ? tipC : gold, Z); put(sx, sy + i, ch, last ? tipC : gold, Z);
+  }
+  const nd = len * 0.5;
+  for (let t = 3; t < 3 + nd; t += 0.9) {
+    const dx = t * 0.7071, dy = t * 0.7071 * AR;
+    const last = t + 0.9 >= 3 + nd;
+    const cc = last ? tipC : gold;
+    put(sx + dx, sy - dy, last ? c_dot : c_slash, cc, Z); put(sx - dx, sy + dy, last ? c_dot : c_slash, cc, Z);
+    put(sx - dx, sy - dy, last ? c_dot : c_bslash, cc, Z); put(sx + dx, sy + dy, last ? c_dot : c_bslash, cc, Z);
+  }
+  const dotC = hsl(46, 0.3, L, 0.6 * rpc);
+  for (let k = 0; k < 8; k++) {
+    const a = k * Math.PI / 4 + Math.PI / 8 + tReal * 0.25;
+    for (let t = 3.6; t < 3.6 + 3.4 * rpc; t += 1.7) put(sx + t * Math.cos(a), sy + t * Math.sin(a) * AR, c_dot, dotC, Z - 1);
+  }
+  for (let k = 0; k < 16; k++) {
+    const a = k * TAU / 16 - tReal * 0.4;
+    put(sx + 7.5 * rp * Math.cos(a), sy + 7.5 * rp * Math.sin(a) * AR, k % 2 ? c_plus : c_star,
+      lightCol(rampHue(k / 16 + tReal * 0.03), 0.8, rpc * (0.6 + 0.4 * Math.sin(tReal * 2 + k))), Z - 1);
+  }
+  /* a burst of sparks as it opens; it is over before the stage ends */
+  const bq = (T - 5.86) / 0.38;
+  if (bq > 0 && bq < 1) {
+    const r = 5 + 22 * easeOutCubic(bq);
+    for (let i = 0; i < 20; i++) {
+      const a = i * TAU / 20 + 0.3, rr = r * (0.75 + 0.25 * h2(i, 77));
+      put(sx + rr * Math.cos(a), sy + rr * Math.sin(a) * AR, bq < 0.4 ? c_star : bq < 0.75 ? c_plus : c_dot,
+        lightCol(rampHue(i / 20), 0.84, 1 - bq), Z - 2);
+    }
+  }
+  addHalo(sx, sy, 10 + 2 * gl + 6 * flash, 0.3 * rpc + 0.2 * gl + 0.1 + 0.4 * flash, gold);
+}
+
+function drawComets(rot) {
+  const su = (T - 6.25) / 3;
+  if (su <= 0 || su > 1.2) return;
+  const DS = 0.0017, hf = 1 - FFLOOR;
+  for (let c = 0; c < 2; c++) {
+    for (let j = 0; j < 110; j++) {
+      const sj = su - j * DS;
+      if (sj < 0 || sj > 1) continue;
+      const f = 1 - sj * hf;
+      const r = treeW(f) * 1.1 + 1.5;
+      const phi = COMET_A0 + c * Math.PI + 8 * Math.PI * sj + rot;
+      let x = cxc + r * Math.sin(phi), y = baseRow - f * treeH + r * Math.cos(phi) * tilt;
+      const z = r * Math.cos(phi);
+      const fade = clamp01((f - FFLOOR) / 0.14);
+      if (j === 0) {
+        const cc = lightCol(rampHue(T * 0.5 + c * 0.5), 0.62, fade);
+        const xr = Math.round(x), yr = Math.round(y);
+        put(xr, yr, c_at, WHITE, z + 3);
+        put(xr - 1, yr, c_at, cc, z + 2.5); put(xr + 1, yr, c_at, cc, z + 2.5);
+        put(xr, yr - 1, c_at, cc, z + 2.5); put(xr, yr + 1, c_at, cc, z + 2.5);
+        const tw = h3(c, 1, Math.floor(tReal * 14));
+        put(xr - 2, yr, c_minus, cc, z + 2); put(xr + 2, yr, c_minus, cc, z + 2);
+        put(xr, yr - 2, c_pipe, cc, z + 2); put(xr, yr + 2, c_pipe, cc, z + 2);
+        if (tw > 0.5) { put(xr - 3, yr, c_minus, cc, z + 2); put(xr + 3, yr, c_minus, cc, z + 2); }
+        if (z > -r * 0.2) addHalo(xr, yr, 7, 0.5 * fade, cc);
+        continue;
+      }
+      const frc = j / 110;
+      const a = Math.pow(1 - frc, 0.8) * fade;
+      if (a < 0.04) continue;
+      if (frc > 0.4) {
+        const l = (frc - 0.4) / 0.6, key = Math.round(sj / DS);
+        x += (h2(key, c + 3) - 0.5) * 6 * l;
+        y += l * l * 5 + (h2(key, c + 9) - 0.5) * 2 * l;
+      }
+      const ch = frc < 0.18 ? c_hash : frc < 0.45 ? c_star : frc < 0.75 ? c_plus : c_dot;
+      const col = lightCol(rampHue(frc * 1.4 + T * 0.5 + c * 0.5), 0.74 - 0.14 * frc, a);
+      put(x, y, ch, col, z + 1);
+      if (frc < 0.14) put(x, y + 1, ch, col, z + 1);
+    }
+  }
+}
+
+/* ============================== drawing: gifts, deer, dust ============================== */
+let giftRot0 = null;
+function drawGifts(rot) {
+  if (T < 9.3) { giftRot0 = null; return; }
+  /* they pop up left and right of the heart, and from then on turn with the tree */
+  if (giftRot0 === null) giftRot0 = rot - (T - 9.3) * 0.5;
+  const rg = rot - giftRot0;
+  const cr = Math.cos(rg), sr = Math.sin(rg);
+  for (let g = 0; g < 5; g++) {
+    const t0 = 9.3 + 0.26 * g, p = (T - t0) / 0.42;
+    if (p <= 0) continue;
+    /* squash and stretch: the box shoots up taller than it is wide, then settles */
+    const pc = Math.min(1, p);
+    const s = easeOutBack(p);
+    const sy = easeOutBack(Math.min(1, p * 1.15)) * (1 + 0.28 * Math.sin(Math.PI * pc) * (1 - pc));
+    const G = GIFTS[g];
+    const pa = G.ang0 + rg, Gx = G.distC * Math.sin(pa), Gz = G.distC * Math.cos(pa);
+    gShade[0] = 1;
+    for (let f = 1; f < 5; f++) {
+      const w = 0.5 - 0.5 * Math.sin(G.yaw + SIDE_ANG[f] + rg);
+      gShade[f] = 0.1 + 0.85 * Math.pow(w, 1.4);
+    }
+    /* each side shades from a darker foot to a lighter top edge; the ribbon has a brighter upper half */
+    for (let f = 0; f < 5; f++) {
+      for (let lv = 0; lv < 4; lv++) {
+        for (let vr = 0; vr < 3; vr++) {
+          gColB[f * 12 + lv * 3 + vr] = hsl(G.hue + (f === 0 ? 0 : (lv - 2) * 3), G.sat,
+            Math.min(0.9, (0.36 + 0.36 * gShade[f] * G.lmul) * (f === 0 ? 1.04 : GIFT_LM[lv]) * (0.95 + 0.05 * vr)));
+        }
+      }
+      gColR[f * 2] = hsl(G.rh, G.rs, 0.8 + 0.1 * gShade[f]);
+      gColR[f * 2 + 1] = hsl(G.rh, G.rs * 0.9, 0.86 + 0.1 * gShade[f]);
+    }
+    const o0 = g * GPN;
+    for (let i = 0; i < GPN; i++) {
+      const o = o0 + i;
+      const X = Gx + s * (gfOx[o] * cr + gfOz[o] * sr), Z = Gz + s * (gfOz[o] * cr - gfOx[o] * sr);
+      const x = cxc + X, y = floorRow + Z * ftilt - sy * gfH[o] * AR;
+      const f = gfFace[o], ty = gfType[o], rn = gfRnd[o];
+      if (ty === 0) {
+        const bv = gShade[f] * (rn < 28 ? 0.78 : 1);
+        let gi = (bv * 4.999) | 0;
+        if (gi > 4) gi = 4;
+        let lv = (gfH[o] / G.h * 4) | 0;
+        if (lv > 3) lv = 3;
+        put(x, y, TREE_GLYPHS[gi], gColB[f * 12 + lv * 3 + (rn % 3)], Z);
+      } else if (ty === 1) put(x, y, c_pipe, gColR[f * 2 + (gfH[o] > G.h * 0.5 ? 1 : 0)], Z + 0.25);
+      else if (ty === 2) put(x, y, c_hash, gColR[1], Z + 0.25);
+      else if (ty === 3) put(x, y, c_eq, gColR[1], Z + 0.25);
+      else put(x, y, rn & 1 ? c_at : c_hash, hsl(G.rh, G.rs, 0.86 + 0.1 * rn / 255), Z + 0.4);
+    }
+    /* a ring of sparks as it pops; gone before the stage ends */
+    const bq = (T - t0) / 0.45;
+    if (bq < 1) {
+      const r = G.w * 0.5 + 2 + 13 * easeOutCubic(bq), hgt = G.h * sy + 9 * Math.sin(Math.PI * bq);
+      const col = hsl(G.rh, 0.85, 0.82, 1 - bq * bq);
+      for (let j = 0; j < 10; j++) {
+        const a = j * TAU / 10 + g + rot;
+        const Z = Gz + r * Math.cos(a);
+        put(cxc + Gx + r * Math.sin(a), floorRow + Z * ftilt - hgt * AR, bq < 0.4 ? c_star : bq < 0.75 ? c_plus : c_dot, col, Z + 3);
+      }
+    }
+  }
+}
+
+/* reindeer: a 2D signed distance field */
+const DE = new Float32Array(8 * 6), DCp = new Float32Array(48 * 6);
+let nDE = 0, nDC = 0;
+function dEll(cx, cy, rx, ry, rot) {
+  const o = nDE * 6;
+  DE[o] = cx; DE[o + 1] = cy; DE[o + 2] = rx; DE[o + 3] = ry; DE[o + 4] = Math.cos(rot); DE[o + 5] = Math.sin(rot); nDE++;
+}
+function dCap(ax, ay, bx, by, ra, rb) {
+  const o = nDC * 6;
+  DCp[o] = ax; DCp[o + 1] = ay; DCp[o + 2] = bx - ax; DCp[o + 3] = by - ay; DCp[o + 4] = ra; DCp[o + 5] = rb - ra; nDC++;
+}
+function deerSDF(px, py) {
+  let d = 1e9;
+  for (let i = 0; i < nDE; i++) {
+    const o = i * 6, dx = px - DE[o], dy = py - DE[o + 1];
+    const lx = dx * DE[o + 4] + dy * DE[o + 5], ly = -dx * DE[o + 5] + dy * DE[o + 4];
+    const rx = DE[o + 2], ry = DE[o + 3];
+    const k0 = Math.sqrt(lx * lx / (rx * rx) + ly * ly / (ry * ry));
+    const k1 = Math.sqrt(lx * lx / (rx * rx * rx * rx) + ly * ly / (ry * ry * ry * ry));
+    const e = k1 > 1e-6 ? k0 * (k0 - 1) / k1 : -Math.min(rx, ry);
+    if (e < d) d = e;
+  }
+  for (let i = 0; i < nDC; i++) {
+    const o = i * 6, pax = px - DCp[o], pay = py - DCp[o + 1], bax = DCp[o + 2], bay = DCp[o + 3];
+    let h = (pax * bax + pay * bay) / (bax * bax + bay * bay + 1e-9);
+    h = h < 0 ? 0 : h > 1 ? 1 : h;
+    const ex = pax - bax * h, ey = pay - bay * h;
+    const e = Math.sqrt(ex * ex + ey * ey) - (DCp[o + 4] + DCp[o + 5] * h);
+    if (e < d) d = e;
+  }
+  return d;
+}
+const FRONT_KEYS = [[34, 18], [8, 2], [-24, -32], [26, -58]];
+const HIND_KEYS = [[22, 40], [-2, 14], [-32, -18], [-8, 38]];
+/* a smooth closed curve through the four key poses, so a leg never stops between them */
+function crom(a, b, c, d, t) {
+  return 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (3 * b - a - 3 * c + d) * t * t * t);
+}
+function deerLeg(hx, hy, keys, ph, L1, L2, r0, r1, r2) {
+  ph = fract(ph);
+  const k = ph * 4, i = Math.floor(k) & 3, t = k - Math.floor(k);
+  const p = keys[(i + 3) & 3], q = keys[i], r = keys[(i + 1) & 3], s = keys[(i + 2) & 3];
+  const a1 = crom(p[0], q[0], r[0], s[0], t) * DEG, a2 = crom(p[1], q[1], r[1], s[1], t) * DEG;
+  const kx = hx + L1 * Math.sin(a1), ky = hy - L1 * Math.cos(a1);
+  dCap(hx, hy, kx, ky, r0, r1);
+  dCap(kx, ky, kx + L2 * Math.sin(a2), ky - L2 * Math.cos(a2), r1, r2);
+}
+/* a small, rounded stag: an egg-shaped body with a full rump and chest, a short upright neck, a neat head with
+   the muzzle forward, antlers that open in a wide V, and slim legs kept under the body */
+function buildDeer(ph) {
+  nDE = 0; nDC = 0;
+  const st = TAU * 2 * ph;
+  /* the head and antlers lag a little behind the body's bounce; the tail flicks */
+  const hx = 0.3 * Math.cos(st + 0.9), hy = 0.4 * Math.sin(st + 0.9);
+  dEll(0, 0, 7.3, 3.3, 0.02);
+  dEll(4.5, 0.6, 3.3, 3.5, 0.3);
+  dEll(-4.6, 0.5, 3.5, 3.4, -0.1);
+  dCap(5.5, 2.2, 6.2 + hx * 0.6, 8.6 + hy * 0.6, 1.8, 1.4);
+  dEll(7.1 + hx, 10.3 + hy, 2.3, 1.6, -0.2);
+  dCap(8.5 + hx, 10.0 + hy, 11.0 + hx, 9.3 + hy, 0.95, 0.6);
+  dCap(5.9 + hx, 11.3 + hy, 4.4 + hx, 12.3 + hy, 0.55, 0.2);
+  const tl = 0.5 * Math.sin(st + 0.3);
+  dCap(-7.1, 1.9, -8.8, 3.9 + tl, 0.9, 0.35);
+  const ax = hx * 1.25, ay = hy * 1.25;
+  dCap(6.4 + ax, 11.6 + ay, 4.2 + ax, 15.0 + ay, 0.48, 0.4);
+  dCap(4.2 + ax, 15.0 + ay, 3.6 + ax, 19.6 + ay, 0.4, 0.22);
+  dCap(5.3 + ax, 13.4 + ay, 2.6 + ax, 14.0 + ay, 0.34, 0.15);
+  dCap(4.2 + ax, 15.2 + ay, 1.6 + ax, 17.4 + ay, 0.34, 0.15);
+  dCap(3.9 + ax, 17.4 + ay, 5.6 + ax, 19.8 + ay, 0.3, 0.15);
+  dCap(7.8 + ax, 11.7 + ay, 9.6 + ax, 15.0 + ay, 0.48, 0.4);
+  dCap(9.6 + ax, 15.0 + ay, 10.6 + ax, 19.4 + ay, 0.4, 0.22);
+  dCap(8.7 + ax, 13.4 + ay, 11.2 + ax, 13.9 + ay, 0.34, 0.15);
+  dCap(9.6 + ax, 15.2 + ay, 12.4 + ax, 17.2 + ay, 0.34, 0.15);
+  dCap(10.2 + ax, 17.4 + ay, 8.6 + ax, 19.8 + ay, 0.3, 0.15);
+  deerLeg(5.2, -2.2, FRONT_KEYS, ph, 4.4, 5.0, 0.88, 0.58, 0.42);
+  deerLeg(4.1, -2.0, FRONT_KEYS, ph + 0.5, 4.4, 5.0, 0.84, 0.55, 0.42);
+  deerLeg(-4.8, -1.7, HIND_KEYS, ph + 0.5, 4.5, 5.2, 1.05, 0.6, 0.42);
+  deerLeg(-5.8, -1.5, HIND_KEYS, ph, 4.5, 5.2, 0.98, 0.56, 0.42);
+}
+const DEER_MAX = 8000;
+const deerI = new Int32Array(DEER_MAX), deerD = new Float32Array(DEER_MAX);
+let deerN = 0;
+let deerMask = new Uint8Array(1);
+let deerOX = 0, deerOY = 0, deerE = 0;
+function prepDeer() {
+  if (deerMask.length !== rows * gcols) deerMask = new Uint8Array(rows * gcols);
+  for (let i = 0; i < deerN; i++) deerMask[deerI[i]] = 0;
+  deerN = 0;
+  const e = (T - 10.85) / 1.4;
+  deerE = e;
+  if (e <= 0) return;
+  const s = Math.max(0.05, 1.1 * easeOutBack(e)), mv = easeOutCubic(e);
+  const ph = fract(tReal * 0.92), st = TAU * 2 * ph;
+  buildDeer(ph);
+  /* a bounding stride: it springs up quickly, hangs, and comes down; the body rocks with it */
+  const hop = Math.pow(0.5 + 0.5 * Math.sin(st), 0.7);
+  const ox = cxc + 1.5 * mv + 0.5 * Math.sin(st * 0.5 + 0.4) * mv;
+  const oy = lerp(baseRow - 0.45 * treeH, baseRow - 0.235 * treeH, mv) - (hop - 0.5) * 1.5 * AR * s;
+  deerOX = ox; deerOY = oy;
+  const rock = 0.075 * Math.sin(st - 0.9);
+  const pc = Math.cos(rock), ps = Math.sin(rock);
+  const x0 = Math.max(0, Math.floor(ox - 16 * s)), x1 = Math.min(gcols - 1, Math.ceil(ox + 18 * s));
+  const y0 = Math.max(0, Math.floor(oy - 26 * AR * s)), y1 = Math.min(rows - 1, Math.ceil(oy + 16 * AR * s));
+  const dimK = clamp01(e * 1.5);
+  for (let y = y0; y <= y1; y++) {
+    const lya = -(y - 0.25 - oy) / (AR * s), lyb = -(y + 0.25 - oy) / (AR * s);
+    for (let x = x0; x <= x1; x++) {
+      const lx0 = (x - ox) / s;
+      /* two samples per cell, one above the other, so thin legs and antlers do not break up */
+      const d = Math.min(deerSDF(lx0 * pc + lya * ps, -lx0 * ps + lya * pc), deerSDF(lx0 * pc + lyb * ps, -lx0 * ps + lyb * pc)) * s;
+      if (d >= 5) continue;
+      const idx = y * gcols + x;
+      dimA[idx] = lerp(1, lerp(0.22, 1, smooth((d - 0.3) / 4.7)), dimK);
+      /* it does not pop in whole: it gathers out of sparkles */
+      if (d < 0.12 && deerN < DEER_MAX && (e > 0.6 || h2(x + 5, y + 9) < e * 1.8)) { deerI[deerN] = idx; deerD[deerN] = d; deerMask[idx] = 1; deerN++; }
+    }
+  }
+}
+const DEER_EDGE = [c_at, c_at, c_8, c_hash, c_at, c_8, c_at, c_hash];
+const DEER_IN = [c_star, c_plus, c_x, c_colon, c_star, c_colon, c_plus, c_star];
+function drawDeer() {
+  const tk = Math.floor(tReal * 4);
+  /* a solid white outline; inside, sparse pale-blue sparkles that twinkle, so the dark tree shows through.
+     the light falls from the upper left: the back and the antlers are pure white, the belly and legs a touch cooler */
+  for (let i = 0; i < deerN; i++) {
+    const idx = deerI[i], x = idx % gcols, y = (idx / gcols) | 0, d = deerD[i];
+    const g = clamp01((y - (deerOY - 8 * AR)) / (20 * AR));
+    /* a cell on the edge of the shape is outline, whatever its distance: rows are taller than the outline is thick */
+    const edge = d > -1.15 || !deerMask[idx - 1] || !deerMask[idx + 1] || !deerMask[idx - gcols] || !deerMask[idx + gcols];
+    if (edge) {
+      put(x, y, DEER_EDGE[(h2(x * 3 + 1, y * 5 + 2) * 8) & 7], hsl(214, 0.5, 0.995 - 0.055 * g), 101);
+    } else {
+      const hv = h3(x, y, tk + ((x * 7 + y * 3) & 3));
+      if (hv < 0.62) put(x, y, DEER_IN[(hv * 12.9) & 7], hsl(212, 0.55, hv < 0.2 ? 0.95 : 0.84 - 0.06 * g), 100);
+    }
+  }
+  if (deerE > 0.5) addHalo(deerOX + 2, deerOY - 4 * AR, 15, 0.05 * clamp01(deerE - 0.5), rgba(236, 244, 255));
+  /* sparkles spiral inward while it forms */
+  if (deerE > 0 && deerE < 1) {
+    const R = 4 + 22 * (1 - deerE) * (1 - deerE);
+    for (let i = 0; i < 16; i++) {
+      const a = i * TAU / 16 + tReal * 5 + deerE * 4, rr = R * (0.7 + 0.3 * h2(i, 31));
+      put(deerOX + rr * Math.cos(a), deerOY - 2 + rr * Math.sin(a) * AR, i % 3 ? c_plus : c_star, rgba(245, 250, 255, 0.5 + 0.5 * deerE), 102);
+    }
+  }
+}
+
+function drawDust(F) {
+  const act = smooth((F - 0.3) / 0.15);
+  if (act <= 0) return;
+  for (let i = 0; i < NDUST; i++) {
+    const f = fract(duF[i] + tReal * duV[i]) * 1.1 - 0.05;
+    if (f > F + 0.04) continue;
+    const r = treeW(f) * (1.06 + 0.4 * duR[i]) + 2 + 3 * duR[i];
+    const phi = duA[i] + tReal * duW[i];
+    const x = cxc + r * Math.sin(phi), z = r * Math.cos(phi), y = baseRow - f * treeH + z * tilt;
+    const tw = 0.5 + 0.5 * Math.sin(tReal * 2.3 + i * 1.7);
+    put(x, y, duC[i], lightCol(rampHue(duH[i]), 0.82, act * (0.3 + 0.55 * tw)), z);
+  }
+}
+
+/* ============================== frame ============================== */
+function draw() {
+  chA.fill(0); depA.fill(-1e9); dimA.fill(1); nHalo = 0;
+  drawSnow();
+  if (state === 'start') {
+    drawPlay();
+  } else {
+    const rot = tReal * 0.5 + twistExtra();
+    const F = growF(T);
+    prepDeer();
+    drawFallingLight();
+    drawDisc(rot);
+    drawBurst();
+    drawMotes();
+    drawTrunk();
+    drawTree(rot);
+    drawBaubles(rot);
+    drawLights(rot);
+    drawRingTrail();
+    drawRing(F);
+    drawStar();
+    drawComets(rot);
+    drawGifts(rot);
+    drawDeer();
+    drawDust(F);
+  }
+  drawHalos();
+}
+
+/* one fillText per non-empty cell, all in white; the cell colours are then laid over the glyphs in one pass
+   from a tiny image that holds one pixel per cell */
+function render() {
+  lctx.globalCompositeOperation = 'source-over';
+  lctx.clearRect(0, 0, W, H);
+  lctx.fillStyle = '#ffffff';
+  const gc = gcols, px = tintPx, gp = glowPx;
+  for (let y = 0; y < rows; y++) {
+    const py = (y + 0.5) * CH, row = y * gc;
+    let line = '', first = -1, gap = 0;
+    for (let x = 0; x < gc; x++) {
+      const i = row + x, ch = chA[i];
+      if (ch === 0) { px[i] = 0; gp[i] = 0; gap++; continue; }
+      const c = colA[i];
+      const r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+      px[i] = ((c & 0xff00ff00) | r | (b << 16)) >>> 0;
+      /* only bright cells glow: everything darker than mid grey drops out, so the tree's greens stay crisp */
+      let r2 = r * 1.92 - 255, g2 = g * 1.92 - 255, b2 = b * 1.92 - 255;
+      if (r2 < 0) r2 = 0;
+      if (g2 < 0) g2 = 0;
+      if (b2 < 0) b2 = 0;
+      gp[i] = r2 + g2 + b2 > 0 ? ((c & 0xff000000) | r2 | (g2 << 8) | (b2 << 16)) >>> 0 : 0;
+      if (!rowText) { lctx.fillText(CHS[ch], gridX0 + (x + 0.5) * CW, py); continue; }
+      if (first < 0) first = x;
+      else if (gap > 0) line += gap < 9 ? SPACES[gap] : ' '.repeat(gap);
+      gap = 0;
+      line += CHS[ch];
+    }
+    if (first >= 0) lctx.fillText(line, gridX0 + first * CW + textOff, py);
+  }
+  tintX.putImageData(tintImg, 0, 0);
+  lctx.globalCompositeOperation = 'source-in';
+  lctx.imageSmoothingEnabled = false;
+  lctx.drawImage(tintC, 0, 0, gc, rows, gridX0, 0, gc * CW, rows * CH);
+  lctx.globalCompositeOperation = 'source-over';
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.drawImage(bgc, 0, 0);
+  ctx.drawImage(lay, 0, 0);
+  /* glow: the bright cells, one pixel each, are halved twice and all three sizes are stretched back over the
+     frame with 'screen'. Stretching such small images is what makes the glow soft */
+  bl1x.putImageData(glowImg, 0, 0);
+  bl2x.clearRect(0, 0, bl2.width, bl2.height);
+  bl2x.drawImage(bl1, 0, 0, bl2.width, bl2.height);
+  bl3x.clearRect(0, 0, bl3.width, bl3.height);
+  bl3x.drawImage(bl2, 0, 0, bl3.width, bl3.height);
+  const gw = gc * CW, gh = rows * CH;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.globalCompositeOperation = 'screen';
+  ctx.globalAlpha = 0.15;
+  ctx.drawImage(bl1, gridX0, 0, gw, gh);
+  ctx.globalAlpha = 0.13;
+  ctx.drawImage(bl2, gridX0, 0, gw, gh);
+  ctx.globalAlpha = 0.11;
+  ctx.drawImage(bl3, gridX0, 0, gw, gh);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  drawCamera();
+}
+
+function frame(ms) {
+  requestAnimationFrame(frame);
+  const dt = document.hidden ? 0 : Math.min(0.25, Math.max(0, (ms - lastMs) / 1000));
+  lastMs = ms;
+  if (!paused) {
+    tReal += dt;
+    emitSnow(dt);
+    if (state === 'film') {
+      const now = performance.now() / 1000;
+      if (pending) {
+        if (now - pending.t > 2) pending = null;
+        else if (motionDone()) openStage(pending.n);
+      }
+      prevT = T;
+      T = Math.min(T + dt, Tlimit);
+      treeT = T >= 5.6 ? Math.max(T, treeT + dt) : T;
+      if (prevT <= 9.2 && T > 9.2) landReal = tReal + 0.05;
+      for (let i = 1; i < 6; i++) if (prevT <= STAGE_END[i] && T > STAGE_END[i]) stageFlashT = tReal;
+      runCues();
+    }
+    pumpHands(ms);
+  }
+  const c0 = performance.now();
+  draw();
+  const cost = performance.now() - c0;
+  render();
+  /* thin the point cloud only if projecting it is what costs the frame rate */
+  if (state === 'film' && T > 3 && !paused) {
+    emaDt = emaDt * 0.95 + cost * 0.05;
+    if (emaDt > 14) {
+      slowT += dt;
+      if (slowT > 1.5 && quality > 2) { quality--; slowT = 0; emaDt = 6; }
+    } else slowT = 0;
+  }
+}
+
+/* ============================== stages ============================== */
+function openStage(n) {
+  stage = n;
+  Tlimit = STAGE_END[n];
+  pending = null;
+  clearGestures();
+  const now = performance.now() / 1000;
+  ignoreUntil = now + 0.7;
+  circleLock = true; lockBuf.length = 0; lastPointT = now;
+}
+function requestStage(n) {
+  if (state !== 'film' || paused || mode === 'auto') return;
+  if (n !== stage + 1) return;
+  if (motionDone()) openStage(n);
+  else pending = { n: n, t: performance.now() / 1000 };
+}
+function setAuto() {
+  if (mode === 'auto') return;
+  mode = 'auto'; stage = 6; Tlimit = Infinity; pending = null;
+}
+function resetFilm() {
+  if (state !== 'film') return;
+  T = 0; prevT = 0; treeT = 0; landReal = -99; stageFlashT = -99; pending = null; lastStep = -1; lastGrain = -1; twists.length = 0;
+  if (mode === 'auto') { Tlimit = Infinity; } else { stage = 0; Tlimit = 0; clearGestures(); }
+}
+function togglePause() {
+  paused = !paused;
+  if (actx) { if (paused) actx.suspend(); else actx.resume(); }
+}
+function begin() {
+  if (state !== 'start') return;
+  initAudio();
+  if (actx) actx.resume();
+  state = 'film'; mode = 'pending';
+  T = 0; prevT = 0; treeT = 0; landReal = -99; stageFlashT = -99; stage = 0; Tlimit = 0; pending = null; lastStep = -1; lastGrain = -1;
+  startCamera();
+}
+
+/* ============================== hands ============================== */
+let video = null, camReady = false, hands = null, handBusy = false, lastSend = 0, handFail = 0, handOK = false;
+let camAsp = 16 / 9;
+const small = document.createElement('canvas'), smx = small.getContext('2d');
+small.width = 480; small.height = 270;
+let handDraw = [], handDrawT = -9;
+const tracks = [];
+let circleLock = false, lastPointT = -9;
+const lockBuf = [];
+let bothT = null, bothMiss = 0, heartN = 0;
+const FT = [8, 12, 16, 20], FP = [6, 10, 14, 18], FM = [5, 9, 13, 17], FD = [7, 11, 15, 19];
+const BONES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12],
+  [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
+
+async function startCamera() {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('camera unavailable');
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: false
+    });
+    video = document.createElement('video');
+    video.muted = true; video.playsInline = true; video.autoplay = true;
+    video.srcObject = stream;
+    await video.play();
+    camReady = true;
+    if (typeof Hands === 'undefined') throw new Error('hand tracking unavailable');
+    hands = new Hands({ locateFile: f => 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/' + f });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5 });
+    hands.onResults(onResults);
+    if (mode === 'pending') mode = 'hands';
+  } catch (err) {
+    hands = null;
+    setAuto();
+  }
+}
+
+function pumpHands(ms) {
+  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < 55) return;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return;
+  camAsp = vw / vh;
+  const sh = Math.max(2, Math.round(480 / camAsp));
+  if (small.height !== sh) small.height = sh;
+  smx.drawImage(video, 0, 0, small.width, small.height);
+  handBusy = true; lastSend = ms;
+  hands.send({ image: small }).then(() => { handBusy = false; }, () => {
+    handBusy = false; handFail++;
+    if (handFail > 3 && !handOK) { hands = null; setAuto(); }
+  });
+}
+
+function d3(a, b) { const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z; return Math.sqrt(dx * dx + dy * dy + dz * dz); }
+function d2(a, b) { const dx = a.x - b.x, dy = a.y - b.y; return Math.sqrt(dx * dx + dy * dy); }
+
+/* everything is measured in image heights, and compared in hand sizes */
+function analyse(lm) {
+  const P = new Array(21);
+  for (let i = 0; i < 21; i++) P[i] = { x: (1 - lm[i].x) * camAsp, y: lm[i].y, z: (lm[i].z || 0) * camAsp };
+  const h = { P: P, lm: lm, tr: null };
+  const size = Math.max(1e-4, d3(P[0], P[9]));
+  h.size = size;
+  const half = Math.min(0.5, 0.5 / camAsp), halfV = Math.min(0.5, 0.5 * camAsp);
+  const rx = lm[9].x, ry = lm[9].y;
+  h.inside = rx >= 0.5 - half && rx <= 0.5 + half && ry >= 0.5 - halfV && ry <= 0.5 + halfV;
+  h.u = 1 - (rx - (0.5 - half)) / (2 * half);
+  h.v = (ry - (0.5 - halfV)) / (2 * halfV);
+  const ext = [false, false, false, false];
+  let nExt = 0, nFold = 0, nBent = 0, curlSum = 0, nDown = 0, baseY = 0;
+  for (let f = 0; f < 4; f++) {
+    const tip = P[FT[f]], pip = P[FP[f]], mcp = P[FM[f]], dip = P[FD[f]];
+    const dt = d3(tip, P[0]), dp = d3(pip, P[0]);
+    ext[f] = dt > dp + 0.18 * size;
+    if (ext[f]) nExt++;
+    if (dt < dp + 0.05 * size) nFold++;
+    const curl = d3(tip, mcp) / (d3(mcp, pip) + d3(pip, dip) + d3(dip, tip) + 1e-6);
+    curlSum += curl;
+    if (curl < 0.96) nBent++;
+    if (tip.y > P[0].y && tip.y > mcp.y) nDown++;
+    baseY += mcp.y;
+  }
+  baseY /= 4;
+  if (d3(P[4], P[0]) > d3(P[3], P[0]) + 0.08 * size) nExt++;
+  h.open = nExt >= 4;
+  h.fist = nFold === 4;
+  h.nBent = nBent; h.curlAvg = curlSum / 4;
+  h.upright = P[0].y - baseY > 0.3 * size;
+  h.indexUp = ext[0] && P[5].y - P[8].y > 0.45 * size;
+  h.pointing = h.indexUp && !h.open && !(ext[1] && ext[2] && ext[3]);
+  h.snow = !h.upright && (nDown >= 3 || (h.v < 1 / 3 && P[8].y > P[5].y && P[12].y > P[9].y));
+  h.tf = (d3(P[4], P[8]) + d3(P[4], P[12])) / 2 / size;
+  h.palmAng = Math.atan2((lm[5].z || 0) - (lm[17].z || 0), (1 - lm[5].x) - (1 - lm[17].x));
+  h.midLen = d3(P[12], P[0]) / size;
+  h.thumbOnMid = Math.min(d2(P[4], P[12]), d2(P[4], P[11]), d2(P[4], P[10])) < 0.5 * size;
+  return h;
+}
+
+function newTrack() {
+  return { x: 0, y: 0, prevX: null, prevY: null, seen: 0, matched: false, fistT: -9, path: [], snap: [],
+    ang: [], angU: 0, angS: 0, angRaw: null, tfPrev: null, tfT: 0, rub: 0 };
+}
+function assignTracks(hs, now) {
+  for (let i = 0; i < tracks.length; i++) tracks[i].matched = false;
+  for (let i = 0; i < hs.length; i++) {
+    const h = hs[i];
+    let best = null, bd = 0.4;
+    for (let j = 0; j < tracks.length; j++) {
+      const tr = tracks[j];
+      if (tr.matched) continue;
+      const d = Math.hypot(tr.x - h.P[9].x, tr.y - h.P[9].y);
+      if (d < bd) { bd = d; best = tr; }
+    }
+    if (!best) { best = newTrack(); tracks.push(best); } else { best.prevX = best.x; best.prevY = best.y; }
+    best.matched = true; best.x = h.P[9].x; best.y = h.P[9].y; best.seen = now;
+    h.tr = best;
+  }
+  for (let j = tracks.length - 1; j >= 0; j--) if (now - tracks[j].seen > 0.6) tracks.splice(j, 1);
+}
+function clearGestures() {
+  for (let i = 0; i < tracks.length; i++) { const tr = tracks[i]; tr.fistT = -9; tr.path.length = 0; tr.snap.length = 0; }
+  bothT = null; heartN = 0;
+}
+function handStill(o) {
+  const tr = o.tr;
+  return tr.prevX !== null && Math.hypot(tr.x - tr.prevX, tr.y - tr.prevY) < 0.4 * o.size;
+}
+function circleOK(path, size, needBoth) {
+  const n = path.length;
+  if (n < 8) return false;
+  let cx = 0, cy = 0, nb = 0;
+  for (let i = 0; i < n; i++) { cx += path[i].x; cy += path[i].y; if (path[i].both) nb++; }
+  cx /= n; cy /= n;
+  let sum = 0, rad = 0, pa = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = path[i].x - cx, dy = path[i].y - cy;
+    rad += Math.sqrt(dx * dx + dy * dy);
+    const a = Math.atan2(dy, dx);
+    if (i > 0) {
+      let d = a - pa;
+      if (d > Math.PI) d -= TAU; else if (d < -Math.PI) d += TAU;
+      sum += d;
+    }
+    pa = a;
+  }
+  rad /= n;
+  if (rad < size / 3) return false;
+  if (Math.abs(sum) < 270 * DEG) return false;
+  if (needBoth && nb / n < 0.8) return false;
+  return true;
+}
+function circleLockUpdate(up, now) {
+  let p = null;
+  for (let i = 0; i < up.length; i++) if (up[i].pointing) { p = up[i]; break; }
+  if (!p) {
+    if (now - lastPointT > 0.4) circleLock = false;
+    lockBuf.length = 0;
+    return;
+  }
+  lastPointT = now;
+  if (!circleLock) return;
+  lockBuf.push({ t: now, x: p.P[8].x, y: p.P[8].y });
+  while (lockBuf.length && lockBuf[0].t < now - 0.4) lockBuf.shift();
+  if (now - lockBuf[0].t >= 0.3) {
+    let extent = 0;
+    for (let i = 1; i < lockBuf.length; i++) extent = Math.max(extent, Math.hypot(lockBuf[i].x - lockBuf[0].x, lockBuf[i].y - lockBuf[0].y));
+    if (extent < 0.3 * p.size) circleLock = false;
+  }
+}
+function twistDetect(h, now) {
+  const tr = h.tr, a = h.palmAng;
+  if (tr.angRaw === null) { tr.angU = a; tr.angS = a; }
+  else {
+    let d = a - tr.angRaw;
+    if (d > Math.PI) d -= TAU; else if (d < -Math.PI) d += TAU;
+    tr.angU += d;
+    tr.angS = tr.angS * 0.5 + tr.angU * 0.5;
+  }
+  tr.angRaw = a;
+  tr.ang.push({ t: now, a: tr.angS });
+  while (tr.ang.length && tr.ang[0].t < now - 0.45) tr.ang.shift();
+  if (now < twistCool) return;
+  let ref = tr.angS;
+  for (let i = 0; i < tr.ang.length; i++) ref = twistDir > 0 ? Math.min(ref, tr.ang[i].a) : Math.max(ref, tr.ang[i].a);
+  if ((tr.angS - ref) * twistDir >= 40 * DEG) { doTwist(); twistCool = now + 1.0; tr.ang.length = 0; }
+}
+
+function onResults(res) {
+  handOK = true;
+  const now = performance.now() / 1000;
+  const raw = (res && res.multiHandLandmarks) || [];
+  handDraw = raw; handDrawT = now;
+  const hs = [];
+  for (let i = 0; i < raw.length; i++) if (raw[i] && raw[i].length >= 21) hs.push(analyse(raw[i]));
+  assignTracks(hs, now);
+  const vis = hs.filter(h => h.inside);
+
+  /* snow: rubbing thumb against fingertips, at any time */
+  for (let i = 0; i < vis.length; i++) {
+    const h = vis[i], tr = h.tr;
+    if (tr.tfPrev !== null && now > tr.tfT) {
+      const rate = Math.abs(h.tf - tr.tfPrev) / (now - tr.tfT);
+      tr.rub = tr.rub * 0.55 + Math.min(rate, 12) * 0.45;
+    }
+    tr.tfPrev = h.tf; tr.tfT = now;
+    if (h.snow) { snowU = h.u; snowVv = h.v; snowRate = clamp((tr.rub - 0.5) * 40, 0, 240); snowSeen = now; }
+  }
+
+  /* twist: one upright hand, not counting a snow hand */
+  const ns = vis.filter(h => !h.snow);
+  if (ns.length === 1 && ns[0].upright && state === 'film' && T > 2.1) twistDetect(ns[0], now);
+  else for (let i = 0; i < tracks.length; i++) { tracks[i].ang.length = 0; tracks[i].angRaw = null; }
+
+  if (mode !== 'hands' || state !== 'film' || paused) return;
+  const up = vis.filter(h => h.upright);
+  circleLockUpdate(up, now);
+  if (now < ignoreUntil) return;
+  const next = stage + 1;
+  if (next > 6) return;
+
+  if (next === 1) {
+    for (let i = 0; i < up.length; i++) {
+      const h = up[i], tr = h.tr;
+      if (h.fist) tr.fistT = now;
+      else if (h.open && now - tr.fistT <= 1.0) { requestStage(1); return; }
+    }
+  } else if (next === 2 || next === 4) {
+    for (let i = 0; i < up.length; i++) {
+      const h = up[i], tr = h.tr;
+      if (!h.pointing) {
+        if (tr.path.length && now - tr.path[tr.path.length - 1].t > 0.4) tr.path.length = 0;
+        continue;
+      }
+      if (circleLock) continue;
+      let both = false;
+      for (let j = 0; j < up.length; j++) {
+        const o = up[j];
+        if (o !== h && o.open && !o.pointing && d2(o.P[9], h.P[9]) > 1.2 * Math.max(o.size, h.size) && handStill(o)) both = true;
+      }
+      tr.path.push({ t: now, x: h.P[8].x, y: h.P[8].y, both: both });
+      while (tr.path.length && tr.path[0].t < now - 1.8) tr.path.shift();
+      if (circleOK(tr.path, h.size, next === 2)) { requestStage(next); return; }
+    }
+  } else if (next === 3) {
+    if (!motionDone()) { for (let i = 0; i < tracks.length; i++) tracks[i].snap.length = 0; return; }
+    for (let i = 0; i < vis.length; i++) {
+      const h = vis[i], s = h.tr.snap;
+      s.push({ len: h.midLen, prep: h.upright && h.midLen >= 1.3 && h.thumbOnMid, pt: h.pointing });
+      if (s.length > 6) s.shift();
+      const n = s.length, cur = s[n - 1];
+      if (cur.prep || cur.pt) continue;
+      for (let k = 1; k <= 2; k++) {
+        const a = s[n - 1 - k], b = s[n - 2 - k];
+        if (!a || !b || !a.prep || !b.prep) continue;
+        let longest = 0;
+        for (let j = n - 1 - k; j >= 0 && s[j].prep; j--) longest = Math.max(longest, s[j].len);
+        if (longest - cur.len >= 0.45) { requestStage(3); return; }
+      }
+    }
+  } else if (next === 5) {
+    let ok = false;
+    if (up.length >= 2) {
+      const a = up[0], b = up[1];
+      ok = a.open && b.open && d2(a.P[9], b.P[9]) >= 1.5 * (a.size + b.size) / 2;
+    }
+    if (ok) {
+      if (bothT === null) bothT = now;
+      bothMiss = now;
+      if (now - bothT >= 0.3) requestStage(5);
+    } else if (bothT !== null && now - bothMiss > 0.15) bothT = null;
+  } else if (next === 6) {
+    let ok = false;
+    if (up.length >= 2) {
+      const a = up[0], b = up[1], S = (a.size + b.size) / 2;
+      ok = d2(a.P[4], b.P[4]) < 0.6 * S &&
+        (d2(a.P[8], b.P[8]) < 0.6 * S || d2(a.P[12], b.P[12]) < 0.6 * S) &&
+        d2(a.P[0], b.P[0]) > 1.1 * S &&
+        a.nBent === 4 && b.nBent === 4 && (a.curlAvg + b.curlAvg) / 2 < 0.9;
+    }
+    heartN = ok ? heartN + 1 : 0;
+    if (heartN >= 4) requestStage(6);
+  }
+}
+
+/* the small camera window: the one thing besides the gradient that is painted */
+function drawCamera() {
+  if (!camReady || !video || video.readyState < 2) return;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return;
+  const s = 0.26 * PW, m = 0.03 * PW, x = stageX + PW - s - m, y = m;
+  const side = Math.min(vw, vh), sx = (vw - side) / 2, sy = (vh - side) / 2;
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(x, y, s, s, s * 0.09);
+  ctx.clip();
+  ctx.translate(x + s, y);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, sx, sy, side, side, 0, 0, s, s);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (performance.now() / 1000 - handDrawT < 0.35) {
+    ctx.lineWidth = Math.max(1, s * 0.007);
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(235,233,221,0.55)';
+    ctx.fillStyle = 'rgba(235,233,221,0.95)';
+    for (let k = 0; k < handDraw.length; k++) {
+      const lm = handDraw[k];
+      if (!lm || lm.length < 21) continue;
+      const qx = i => x + s - (lm[i].x * vw - sx) / side * s, qy = i => y + (lm[i].y * vh - sy) / side * s;
+      ctx.beginPath();
+      for (let b = 0; b < BONES.length; b++) { ctx.moveTo(qx(BONES[b][0]), qy(BONES[b][0])); ctx.lineTo(qx(BONES[b][1]), qy(BONES[b][1])); }
+      ctx.stroke();
+      for (let i = 0; i < 21; i++) {
+        const r = s * (i % 4 === 0 && i > 0 ? 0.017 : 0.011);
+        ctx.beginPath();
+        ctx.roundRect(qx(i) - r, qy(i) - r, 2 * r, 2 * r, r);
+        ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+  ctx.beginPath();
+  ctx.roundRect(x, y, s, s, s * 0.09);
+  ctx.lineWidth = Math.max(1, PW * 0.0022);
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+  ctx.stroke();
+}
+
+/* ============================== sound ============================== */
+let actx = null, bus = null, noiseBuf = null;
+let lastStep = -1, lastGrain = -1;
+function initAudio() {
+  if (actx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  try {
+    actx = new AC();
+    bus = actx.createGain();
+    const dry = actx.createGain(); dry.gain.value = 0.85;
+    const wet = actx.createGain(); wet.gain.value = 0.32;
+    const conv = actx.createConvolver();
+    const len = Math.floor(actx.sampleRate * 2.4);
+    const ir = actx.createBuffer(2, len, actx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = ir.getChannelData(c);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+    }
+    conv.buffer = ir;
+    const comp = actx.createDynamicsCompressor();
+    comp.threshold.value = -16; comp.ratio.value = 4;
+    const master = actx.createGain(); master.gain.value = 1.3;
+    bus.connect(dry); dry.connect(comp);
+    bus.connect(conv); conv.connect(wet); wet.connect(comp);
+    comp.connect(master); master.connect(actx.destination);
+    const nl = Math.floor(actx.sampleRate * 2);
+    noiseBuf = actx.createBuffer(1, nl, actx.sampleRate);
+    const nd = noiseBuf.getChannelData(0);
+    for (let i = 0; i < nl; i++) nd[i] = Math.random() * 2 - 1;
+  } catch (err) {
+    actx = null;
+  }
+}
+function audioOK() { return !!actx && actx.state === 'running'; }
+function outNode(pan) {
+  if (pan && actx.createStereoPanner) {
+    const p = actx.createStereoPanner();
+    p.pan.value = clamp(pan, -1, 1);
+    p.connect(bus);
+    return p;
+  }
+  return bus;
+}
+function envGain(t, vol, att, dur) {
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(vol, t + att);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + Math.max(dur, att + 0.02));
+  return g;
+}
+const PENT = [0, 2, 4, 7, 9];
+function pent(i) {
+  const o = Math.floor(i / 5);
+  return 523.25 * Math.pow(2, (PENT[i - o * 5] + 12 * o) / 12);
+}
+const BELL_PARTS = [[1, 1, 1], [2.76, 0.2, 0.62], [5.4, 0.07, 0.4]];
+function bell(t, f, vol, dur, pan) {
+  const dst = outNode(pan);
+  for (let i = 0; i < 3; i++) {
+    const fq = f * BELL_PARTS[i][0];
+    if (fq > 16000) continue;
+    const o = actx.createOscillator();
+    o.type = 'sine'; o.frequency.value = fq;
+    const d = dur * BELL_PARTS[i][2];
+    const g = envGain(t, vol * BELL_PARTS[i][1], 0.004, d);
+    o.connect(g); g.connect(dst);
+    o.start(t); o.stop(t + d + 0.05);
+  }
+}
+function noise(t, dur, f0, f1, q, vol, att, pan) {
+  const s = actx.createBufferSource();
+  s.buffer = noiseBuf; s.loop = true;
+  const fl = actx.createBiquadFilter();
+  fl.type = 'bandpass'; fl.Q.value = q;
+  fl.frequency.setValueAtTime(f0, t);
+  if (f1 !== f0) fl.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  const g = envGain(t, vol, att, dur);
+  s.connect(fl); fl.connect(g); g.connect(outNode(pan));
+  s.start(t, Math.random() * 1.5); s.stop(t + dur + 0.05);
+}
+function glide(t, f0, f1, dur, vol, type, att) {
+  const o = actx.createOscillator();
+  o.type = type || 'sine';
+  o.frequency.setValueAtTime(f0, t);
+  o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  const g = envGain(t, vol, att || 0.008, dur + 0.04);
+  o.connect(g); g.connect(bus);
+  o.start(t); o.stop(t + dur + 0.1);
+}
+function pad(t, f, vol, att, dur) {
+  const o = actx.createOscillator();
+  o.type = 'sine'; o.frequency.value = f;
+  const g = envGain(t, vol, att, dur);
+  o.connect(g); g.connect(bus);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+/* a noise bed whose loudness flutters like leaves brushing each other; its pitch never sweeps upward */
+function leafBed(t, dur, fLo, fHi, vol) {
+  const s = actx.createBufferSource();
+  s.buffer = noiseBuf; s.loop = true;
+  const fl = actx.createBiquadFilter();
+  fl.type = 'bandpass'; fl.Q.value = 0.9;
+  if (fHi > fLo) {
+    const fc = new Float32Array(48);
+    let w = 0.5;
+    for (let i = 0; i < 48; i++) { w = clamp(w + (Math.random() - 0.5) * 0.5, 0, 1); fc[i] = lerp(fLo, fHi, w); }
+    fl.frequency.setValueCurveAtTime(fc, t, dur);
+  } else fl.frequency.value = fLo;
+  const flut = actx.createGain();
+  const N = 256, curve = new Float32Array(N);
+  let v = 0.5;
+  for (let i = 0; i < N; i++) {
+    v = clamp(v + (Math.random() - 0.5) * 0.6, 0.08, 1);
+    const spike = Math.random() < 0.08 ? 1.5 : 1;
+    curve[i] = vol * Math.min(1.3, v * spike) * Math.pow(Math.sin(Math.PI * i / (N - 1)), 0.7);
+  }
+  curve[0] = 0; curve[N - 1] = 0;
+  flut.gain.setValueCurveAtTime(curve, t, dur);
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(1, t + 0.5);
+  g.gain.setValueAtTime(1, t + dur - 0.8);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  s.connect(fl); fl.connect(flut); flut.connect(g); g.connect(bus);
+  s.start(t); s.stop(t + dur + 0.05);
+}
+
+function sDrop(t) {
+  glide(t, 2400, 620, 0.34, 0.1, 'sine');
+  bell(t, pent(12), 0.08, 1.2, 0);
+}
+function sLand(t) {
+  glide(t, 120, 44, 0.42, 0.55, 'sine');
+  noise(t, 1.2, 280, 2600, 0.8, 0.13, 0.35, 0);
+  bell(t, pent(-10), 0.2, 3.2, -0.3);
+  bell(t + 0.04, pent(-7), 0.16, 3.2, 0.3);
+  for (let i = 0; i < 3; i++) bell(t + 0.3 + 0.13 * i, pent(9 + i * 2), 0.07, 1.0, (i - 1) * 0.5);
+}
+function sTrunk(t) {
+  for (let i = 0; i < 6; i++) {
+    const tt = t + i * 0.07, k = Math.pow(1.13, i);
+    glide(tt, 150 * k, 110 * k, 0.07, 0.22, 'triangle', 0.003);
+    noise(tt, 0.03, 1700, 1700, 2.5, 0.08, 0.002, 0);
+  }
+}
+function sRing(t) {
+  noise(t, 0.62, 420, 4200, 1.4, 0.12, 0.4, 0);
+  glide(t, 330, 990, 0.6, 0.07, 'sine', 0.2);
+  bell(t + 0.6, pent(5), 0.14, 1.6, 0);
+}
+function sLeaves(t) {
+  leafBed(t, 3.6, 2600, 3800, 0.05);
+  leafBed(t, 3.6, 6200, 6200, 0.03);
+}
+function sStar(t) {
+  for (let i = 0; i < 5; i++) bell(t + i * 0.055, pent(5 + i), 0.08, 0.5, 0);
+  const notes = [5, 7, 8, 10], pans = [-0.7, 0.7, -0.35, 0.35];
+  for (let i = 0; i < 4; i++) bell(t + 0.38, pent(notes[i]), 0.11, 2.4, pans[i]);
+  noise(t + 0.38, 1.4, 8000, 9500, 1.2, 0.035, 0.25, 0);
+}
+function sComets(t) {
+  noise(t, 0.9, 5200, 600, 1.2, 0.12, 0.15, 0);
+  for (let i = 0; i < 24; i++) bell(t + i * 0.125, pent(13 - Math.floor(i / 2)), 0.065, 0.7, i % 2 ? 0.95 : -0.95);
+}
+function sLit(t) {
+  const notes = [-5, -3, -2, 0];
+  for (let i = 0; i < 4; i++) pad(t, pent(notes[i]), 0.07, 0.5, 3.0);
+  bell(t, pent(5), 0.1, 2.0, 0);
+}
+const GIFT_NOTES = [5, 6, 7, 8, 10];
+function sGift(t, i) {
+  const f0 = 240 * Math.pow(1.26, i);
+  glide(t, f0, f0 * 3.2, 0.075, 0.2, 'sine', 0.004);
+  noise(t, 0.03, 3000, 3000, 2, 0.07, 0.002, 0);
+  bell(t + 0.06, pent(GIFT_NOTES[i]), 0.12, 1.2, (i - 2) * 0.35);
+}
+const SLEIGH = [2793, 2840, 3136, 3185];
+function sDeer(t) {
+  for (let i = 0; i < 7; i++) bell(t + i * 0.07, pent(3 + i), 0.09, 0.9, -0.9 + i * 0.3);
+  for (let j = 0; j < 8; j++) {
+    const tt = t + 0.6 + j * 0.17, v = 1 - j / 9;
+    noise(tt, 0.05, 6000, 6000, 3, 0.07 * v, 0.003, 0);
+    for (let k = 0; k < 4; k++) bell(tt, SLEIGH[k], 0.022 * v, 0.22, j % 2 ? 0.4 : -0.4);
+  }
+}
+const CUES = [
+  [0.05, sDrop], [0.39, sLand], [1.05, sTrunk], [1.5, sRing], [2.1, sLeaves], [5.6, sStar], [6.25, sComets], [9.24, sLit],
+  [9.35, t => sGift(t, 0)], [9.61, t => sGift(t, 1)], [9.87, t => sGift(t, 2)], [10.13, t => sGift(t, 3)],
+  [10.39, t => sGift(t, 4)], [10.85, sDeer]
+];
+/* every cue fires once when T crosses its time; if the context is not running the cue is skipped */
+function runCues() {
+  if (T <= prevT) return;
+  const ok = audioOK();
+  const at = ok ? actx.currentTime + 0.01 : 0;
+  for (let i = 0; i < CUES.length; i++) {
+    const c = CUES[i][0];
+    if (prevT <= c && T > c && ok) CUES[i][1](at);
+  }
+  if (T > 2.1 && T < 5.7) {
+    const F = Math.min(1, growF(T));
+    const st = Math.floor(F * 40), gr = Math.floor(F * 70);
+    if (st > lastStep) {
+      lastStep = st;
+      if (ok && Math.random() < 0.75) bell(at, pent(8 + Math.floor(Math.random() * 8)), 0.035, 0.9, Math.random() * 2 - 1);
+    }
+    if (gr > lastGrain) {
+      lastGrain = gr;
+      if (ok) { const f = 3000 + Math.random() * 4000; noise(at, 0.05, f, f, 2, 0.02, 0.008, Math.random() - 0.5); }
+    }
+  }
+}
+
+/* ============================== input and start ============================== */
+window.addEventListener('keydown', e => {
+  const k = e.key;
+  if (state === 'start') {
+    if (k === 'Enter' || k === ' ') { e.preventDefault(); begin(); }
+    return;
+  }
+  if (k === ' ') { e.preventDefault(); togglePause(); }
+  else if (k === 'r' || k === 'R') resetFilm();
+  else if (k.length === 1 && k >= '1' && k <= '6') requestStage(k.charCodeAt(0) - 48);
+  else if (k === 'd' || k === 'D') twistDir = -twistDir;
+  else if (k === 't' || k === 'T') doTwist();
+});
+cv.addEventListener('click', begin);
+window.addEventListener('resize', resize);
+
+genTree();
+genMisc();
+genGifts();
+resize();
+requestAnimationFrame(frame);
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+</body>
+</html>
