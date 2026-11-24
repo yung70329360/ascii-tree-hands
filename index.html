@@ -32,8 +32,8 @@ const easeOutBack = t => {
 const easeInOut15 = g => (g < 0.5 ? Math.pow(2 * g, 1.5) / 2 : 1 - Math.pow(2 * (1 - g), 1.5) / 2);
 const easeInOut15Inv = e => (e < 0.5 ? Math.pow(2 * e, 1 / 1.5) / 2 : 1 - Math.pow(2 * (1 - e), 1 / 1.5) / 2);
 /* the tree rises at an almost steady pace, quick off the mark, and is whole a little after 5.3 s */
-const growF = t => Math.pow(clamp01((t - 2.1) / 3.45), 0.8) * 1.06 * (0.5 + 0.5 * smooth((t - 2.1) / 0.3));
-const tPassOf = f => 2.1 + 3.45 * Math.pow(clamp01(f / 1.06), 1.25);
+const growF = t => easeInOut15(clamp01((t - 2.1) / 4.35)) * 1.12;
+const tPassOf = f => 2.1 + 4.35 * easeInOut15Inv(clamp01(f / 1.12));
 
 function mulberry(seed) {
   let a = seed >>> 0;
@@ -256,7 +256,8 @@ function treeW(f) {
 }
 
 const NB = 100000, NL = 5000;
-let pR, pSin, pCos, pF, pDr, pT, pB, pFr, pHv, pGj, pTintC, pTintT, pTintS;
+let pR, pSin, pCos, pF, pDr, pT, pB, pFr, pHv, pGj, pTintC, pTintT, pTintS, pSh, pK;
+const tShadowT = new Float32Array(6), shK = new Float32Array(6);
 const qIdx = new Int32Array(NB), qZ = new Float32Array(NB), qSp = new Float32Array(NB), qCp = new Float32Array(NB), qExt = new Float32Array(NB);
 const lR = new Float32Array(NL), lSin = new Float32Array(NL), lCos = new Float32Array(NL), lFy = new Float32Array(NL);
 const lB = new Uint16Array(NL);
@@ -386,7 +387,9 @@ function genTree() {
   const aR = new Float32Array(NB), aS = new Float32Array(NB), aC = new Float32Array(NB), aF = new Float32Array(NB);
   const aD = new Float32Array(NB), aT = new Float32Array(NB), aB = new Uint8Array(NB), aFr = new Uint8Array(NB);
   const aHv = new Uint8Array(NB), aGj = new Int8Array(NB), aTc = new Uint32Array(NB), aTt = new Float32Array(NB);
-  const aTs = new Uint8Array(NB);
+  const aTs = new Uint8Array(NB), aSh = new Uint8Array(NB).fill(255), aK = new Uint8Array(NB);
+  /* the top of a tier only falls into shadow once the tier above it has grown over it */
+  for (let k = 0; k < 6; k++) tShadowT[k] = k < 5 ? tPassOf(tFb[k + 1]) - 0.05 : 0;
   for (let i = 0; i < NB; i++) {
     let pick = rng() * tws, k = 0;
     while (k < 5 && pick > tw[k]) { pick -= tw[k]; k++; }
@@ -410,6 +413,7 @@ function genTree() {
       else shade = u < 0.42 ? 1 : lerp(1, 0.14, smooth((u - 0.42) / 0.3));
       const nst = Math.max(12, Math.round(TAU * tR[k] * TR / 2.2));
       const st = 0.74 + 0.36 * h2(k * 7 + 1, Math.floor(a / TAU * nst));
+      if (k < 5) { aSh[i] = Math.round(shade * 255); shade = 1; }
       b = (0.2 + 0.8 * Math.pow(q, 2.4)) * shade * st * lbr * (1.06 - 0.24 * (v + 1)) * (0.9 + 0.2 * rng()) *
         (0.86 + 0.28 * h2(k * 5 + 2, Math.floor(a / TAU * nst * 1.7) * 31 + Math.floor(u * 14)));
       q *= 1 - 0.06 * v;
@@ -431,6 +435,7 @@ function genTree() {
     aD[i] = tDroop[k] * ldr * (0.5 + 0.5 * shp) * q * q * (core ? 0.5 : 1);
     aT[i] = tPassOf(f);
     aB[i] = clamp(Math.round(b * 255), 0, 255);
+    aK[i] = k;
     aFr[i] = Math.round(frost * 255);
     aHv[i] = Math.floor(rng() * 8);
     const gj = rng();
@@ -443,7 +448,7 @@ function genTree() {
   pR = re(aR, Float32Array); pSin = re(aS, Float32Array); pCos = re(aC, Float32Array); pF = re(aF, Float32Array);
   pDr = re(aD, Float32Array); pT = re(aT, Float32Array); pB = re(aB, Uint8Array); pFr = re(aFr, Uint8Array);
   pHv = re(aHv, Uint8Array); pGj = re(aGj, Int8Array); pTintC = re(aTc, Uint32Array); pTintT = re(aTt, Float32Array);
-  pTintS = re(aTs, Uint8Array);
+  pTintS = re(aTs, Uint8Array); pSh = re(aSh, Uint8Array); pK = re(aK, Uint8Array);
 
   /* red baubles hanging under each rim */
   const nBa = [5, 4, 4, 3, 3, 2];
@@ -882,6 +887,7 @@ function drawTree(rot) {
   /* when the star opens, a band of its light washes down the tree */
   const washOn = Tl > 5.86 && Tl < 6.3, fw = 1.06 - (Tl - 5.88) / 0.34 * 1.2;
   const starK = clamp01((Tl - 5.8) / 0.4) * (0.85 + 0.15 * Math.sin(tReal * 1.3));
+  for (let k = 0; k < 6; k++) shK[k] = smooth((Tn - tShadowT[k]) / 0.55);
   let nProc = 0;
   for (let i = 0; i < NB; i++) {
     const age = Tn - pT[i];
@@ -914,18 +920,23 @@ function drawTree(rot) {
     const sp = qSp[i], cp = qCp[i], age = qExt[i];
     const w = 0.5 - 0.5 * sp;
     const light = 0.03 + 0.97 * w * Math.sqrt(w) + 0.04 * cp;
-    const b = pB[i] * 0.003921569;
+    let b = pB[i] * 0.003921569;
+    if (pSh[i] !== 255) b *= 1 - (1 - pSh[i] * 0.003921569) * shK[pK[i]];
     let bb = b * (0.16 + 0.92 * light);
     let fr = 0;
     /* snow lies on a patch when its own level passes a threshold that drops toward the lit side */
     if (pFr[i] !== 0 && w > 0.46) { const fd = (w - 0.46) * 1.5; if (pFr[i] * 0.003921569 > 1 - (fd > 0.66 ? 0.66 : fd)) fr = 1; }
     let young = 0, mat = 1;
-    if (age < 0.6) {
-      mat = age <= 0.1 ? 0 : (age - 0.1) * 2;
-      const yb = 0.2 + 0.12 * b;
-      bb = yb + (bb - yb) * mat;
-      fr *= mat;
-      if (age < 0.3) young = 1 - age / 0.3;
+    if (age < 1.7) {
+      /* frost settles on a patch well after its leaves are out, each patch at its own moment */
+      if (fr !== 0 && age < 0.55 + 1.1 * (1 - pFr[i] * 0.003921569)) fr = 0;
+      if (age < 0.75) {
+        /* fresh leaves come out bright in the ring's light, then settle into their own shade */
+        mat = age / 0.75; mat = mat * mat * (3 - 2 * mat);
+        const yb = 0.3 + 0.44 * w + 0.1 * b;
+        bb = yb + (bb - yb) * mat;
+        if (age < 0.24) young = 1 - age / 0.24;
+      }
     }
     if (washOn) {
       const dw = Math.abs(pF[i] - fw);
@@ -1072,36 +1083,39 @@ function drawLights(rot) {
    outer rows, white next to the hole on the far half and through the middle on the near half. Small ripples of
    hue break the near half into shorter runs, and the whole pattern drifts round the ring all the time.
    It opens wide around the foot of the tree and then draws in to the width of the growing top. */
-/* the ring's trail. Each copy stays at the height where it was left, so a ladder of them hangs below the rising
-   ring: the newest is a soft coloured band right under it, the older ones thin out into dots, widen and fade.
-   Their colours flow with the ring's. This is what joins one position of the ring to the next. */
-const TRAIL_N = 24, TRAIL_LIFE = 0.85;
+/* the ring's trail. Each copy stays at the height where it was left, so a ladder of echoes hangs below the rising
+   ring. The newest sits right under the ring as a soft dotted line in the ring's colours; as an echo ages it
+   opens outward, turns into dashes, then into single dots, and fades. They show at the two sides, where the sky is
+   behind them; the tree hides the rest. This is what joins one position of the ring to the next. */
+const TRAIL_N = 24, TRAIL_LIFE = 0.95;
 const trT = new Float32Array(TRAIL_N).fill(-99), trY = new Float32Array(TRAIL_N), trR = new Float32Array(TRAIL_N), trB = new Float32Array(TRAIL_N);
 let trHead = 0, trLast = -99;
 function drawRingTrail() {
   if (T < 1.5) { if (trLast > -99) { trT.fill(-99); trLast = -99; } return; }
   for (let k = 0; k < TRAIL_N; k++) {
     const age = tReal - trT[k];
-    if (age < 0.03 || age >= TRAIL_LIFE) continue;
+    if (age < 0.02 || age >= TRAIL_LIFE) continue;
     const p = age / TRAIL_LIFE, q = 1 - (1 - p) * (1 - p);
-    const R = trR[k] + 1 + 10 * q, eb = R * trB[k];
-    const yc = trY[k] + 1.1 * q;
-    const al = Math.pow(1 - p, 1.5) * 0.66;
-    const N = Math.ceil(TAU * R * 0.95);
-    /* band first, then every second cell, then every third */
-    const step = p < 0.22 ? 1 : p < 0.55 ? 2 : 3;
-    const ch = p < 0.22 ? c_hash : p < 0.55 ? c_colon : c_dot;
-    const wash = 0.25 + 0.6 * p;
-    for (let n = k % step; n < N; n += step) {
+    const R = trR[k] - 1 + 15 * q, eb = R * trB[k] * (1 - 0.25 * q);
+    const yc = trY[k] + 0.8 * q;
+    const al = (p < 0.12 ? p / 0.12 : Math.pow(1 - (p - 0.12) / 0.88, 1.2)) * 0.8;
+    const N = Math.ceil(TAU * R);
+    const stage = p < 0.3 ? 0 : p < 0.62 ? 1 : 2;
+    const ch = stage === 0 ? c_colon : stage === 1 ? c_minus : c_dot;
+    const wash = 0.3 + 0.6 * p, off = k * 3;
+    for (let n = 0; n < N; n++) {
+      /* a close dotted line, then dashes of six with gaps of two, then every second dot */
+      const m = n + off;
+      if (stage === 0 ? (m & 7) === 7 : stage === 1 ? (m & 7) > 5 : (m & 1)) continue;
       const th = n / N * TAU, cz = Math.cos(th), sx = Math.sin(th);
-      /* strongest at the two sides, where it shows against the sky; faint where it crosses the tree */
-      const side = 0.22 + 0.78 * sx * sx;
+      const side = sx * sx;
+      if (side < 0.2) continue;
       let hd = 323 + (th > Math.PI ? th - TAU : th) * 114.59 + tReal * 34;
       hd = Math.floor(hd - Math.floor(hd / 360) * 360);
       if (hd > 359) hd = 359;
       const r = RING_LUT[hd * 3], g = RING_LUT[hd * 3 + 1], b = RING_LUT[hd * 3 + 2];
       put(cxc + R * sx, yc + eb * cz, ch,
-        rgba(r + (232 - r) * wash, g + (236 - g) * wash, b + (250 - b) * wash, al * side), step === 1 ? R * cz + 0.5 : -300);
+        rgba(r + (232 - r) * wash, g + (236 - g) * wash, b + (250 - b) * wash, al * (0.15 + 0.85 * side)), -300);
     }
   }
 }
@@ -1119,6 +1133,15 @@ const RING_LUT = new Uint8Array(360 * 3);
     for (let c = 0; c < 3; c++) RING_LUT[h * 3 + c] = Math.round(lerp(RING_STOPS[a + 1 + c], RING_STOPS[b + 1 + c], f));
   }
 })();
+/* outline of the tree at height f, tier by tier and unsmoothed: wide where a tier starts, narrow at its top */
+function tierR(f) {
+  if (f < 0) f = 0;
+  let w = 0;
+  for (let k = 0; k < 6; k++) {
+    if (f >= tFb[k] && f <= tFt[k]) { const r = tR[k] * TR * prof(k, (f - tFb[k]) / (tFt[k] - tFb[k])); if (r > w) w = r; }
+  }
+  return w;
+}
 function drawRing(F) {
   if (T < 1.5) return;
   const sk = clamp01((T - 5.6) / 0.16), shrink = sk * sk;
@@ -1132,16 +1155,22 @@ function drawRing(F) {
   const rt = 0.234 * AR;
   /* it is drawn almost as wide as the stage, then closes in on the growing top and stays a little wider than it */
   const wide = 1 - smooth((T - 1.75) / 1.15);
-  const Rm = lerp(treeW(Math.min(1, fr)) + 4, 52.5, wide) * (1 - shrink) * (1 + 0.02 * Math.sin(tReal * 6.5)) + 0.01;
+  /* the ring breathes with the tree: it draws in as a tier narrows and opens again when the next tier starts.
+     Its width is the tier outline at its own height, averaged over the last quarter second so it never jumps */
+  let rs = 0;
+  for (let j = 0; j < 8; j++) rs += tierR(Math.min(1, growF(T - j * 0.035) + 0.075));
+  /* its outer edge stands a little outside the tier, so it sits on the growing top like a cap */
+  const Ro = lerp(Math.max(8.5, rs / 8 + 5), 58, wide);
+  const Rm = (Ro - 2.2) / 1.15 * (1 - shrink) * (1 + 0.015 * Math.sin(tReal * 6.5)) + 0.01;
   const rh = Math.min(6.6, 2.2 + Rm * 0.15) * (1 - 0.5 * shrink);
   const R0 = Rm + rh;
   const yr = baseRow - fr * treeH;
   const eb = Math.max(0.6, Rm * rt), rv = Math.min(2.6, Math.max(eb * 0.5, Math.min(2.1, rh * 0.5)));
-  /* ten times a second the ring leaves a copy of its outline where it stands */
+  /* nine times a second the ring leaves a copy of its outline where it stands */
   if (tReal < trLast) trLast = -99;
-  if (entX >= 1 && shrink <= 0 && tReal - trLast > 0.1) {
+  if (entX >= 1 && shrink <= 0 && tReal - trLast > 0.11) {
     trLast = tReal;
-    trT[trHead] = tReal; trY[trHead] = yr; trR[trHead] = R0; trB[trHead] = (eb + rv) / R0;
+    trT[trHead] = tReal; trY[trHead] = yr + rv * 0.6; trR[trHead] = R0; trB[trHead] = (eb + rv * 0.4) / R0;
     trHead = (trHead + 1) % TRAIL_N;
   }
   const xa = Math.max(0, Math.floor(cxc - R0 - 3)), xb = Math.min(gcols - 1, Math.ceil(cxc + R0 + 3));
