@@ -511,11 +511,11 @@ function genMisc() {
 
 /* gifts: each one is its own small point cloud */
 const GIFTS = [
-  { w: 13, h: 13, d: 13, px: 45, pz: 12, hue: 356, sat: 0.5, lmul: 1, rh: 44, rs: 0.34 },
-  { w: 8, h: 8, d: 8, px: 55, pz: -16, hue: 42, sat: 0.5, lmul: 0.96, rh: 350, rs: 0.4 },
-  { w: 15, h: 6.5, d: 11, px: -45, pz: 15, hue: 152, sat: 0.36, lmul: 0.97, rh: 44, rs: 0.34 },
-  { w: 6.5, h: 15, d: 6.5, px: -55, pz: -12, hue: 214, sat: 0.46, lmul: 1.03, rh: 44, rs: 0.34 },
-  { w: 10, h: 10, d: 9, px: 39, pz: -26, hue: 326, sat: 0.42, lmul: 1, rh: 44, rs: 0.34 }
+  { w: 13, h: 13, d: 13, px: 45, pz: 12, hue: 348, sat: 0.62, lmul: 1, rh: 46, rs: 0.5 },
+  { w: 8, h: 8, d: 8, px: 55, pz: -16, hue: 40, sat: 0.66, lmul: 1, rh: 46, rs: 0.35 },
+  { w: 15, h: 6.5, d: 11, px: -45, pz: 15, hue: 160, sat: 0.46, lmul: 1, rh: 46, rs: 0.5 },
+  { w: 6.5, h: 15, d: 6.5, px: -55, pz: -12, hue: 208, sat: 0.6, lmul: 1, rh: 46, rs: 0.5 },
+  { w: 10, h: 10, d: 9, px: 39, pz: -26, hue: 268, sat: 0.52, lmul: 1, rh: 46, rs: 0.5 }
 ];
 const GPN = 2400;
 const gfOx = new Float32Array(GPN * 5), gfOz = new Float32Array(GPN * 5), gfH = new Float32Array(GPN * 5);
@@ -523,7 +523,7 @@ const gfFace = new Uint8Array(GPN * 5), gfType = new Uint8Array(GPN * 5), gfRnd 
 const SIDE_ANG = [0, Math.PI / 2, -Math.PI / 2, 0, Math.PI];
 const gShade = new Float32Array(5);
 const gColB = new Uint32Array(5 * 12), gColR = new Uint32Array(10);
-const GIFT_LM = [0.86, 0.94, 1.0, 1.07];
+const GIFT_LM = [0.9, 0.96, 1.0, 1.05];
 
 function genGifts() {
   const rng = mulberry(4242);
@@ -1037,7 +1037,7 @@ function drawBaubles(rot) {
     const x = Math.round(cxc + b.r * sp), y = Math.round(baseRow - b.fy * treeH + z * tilt + 1 + drop);
     const w = 0.5 - 0.5 * sp;
     const ci = y >= 0 && y < rows && x >= 0 && x < gcols ? dimA[y * gcols + x] : 1;
-    if (ci < 0.6) continue;
+    if (ci < 0.92) continue;
     const L = (0.2 + 0.34 * w) * ci;
     const c1 = hsl(354, 0.8, L + 0.06), c2 = hsl(354, 0.8, L);
     put(x - 1, y, c_at, c1, z); put(x, y, c_at, c1, z); put(x + 1, y, c_at, c2, z);
@@ -1046,6 +1046,9 @@ function drawBaubles(rot) {
   }
 }
 
+function dimCol(c, k) {
+  return ((c & 0xff000000) | ((((c >> 16) & 255) * k) << 16) | ((((c >> 8) & 255) * k) << 8) | ((c & 255) * k)) >>> 0;
+}
 const LIGHT_GL = [c_o, c_0, c_at, c_star, c_8, c_o, c_0, c_star];
 function drawLights(rot) {
   if (T < 6.25) return;
@@ -1072,8 +1075,10 @@ function drawLights(rot) {
     const y = Math.floor(baseRow - lFy[i] * treeH + z * tilt + 0.5);
     if (y < 0 || y >= rw) continue;
     const idx = y * gc + x;
-    if (z < depA[idx] || dimA[idx] < 0.97) continue;
-    depA[idx] = z; chA[idx] = bCh[lB[i]] === c_at ? c_at : LIGHT_GL[i & 7]; colA[idx] = col;
+    /* lights step aside within two cells of the deer, so its fine lines stay readable; beyond that they are just a little softer */
+    const dm = dimA[idx];
+    if (z < depA[idx] || dm < 0.92) continue;
+    depA[idx] = z; chA[idx] = bCh[lB[i]] === c_at ? c_at : LIGHT_GL[i & 7]; colA[idx] = dm < 0.99 ? dimCol(col, dm) : col;
   }
 }
 
@@ -1406,11 +1411,11 @@ function drawGifts(rot) {
       for (let lv = 0; lv < 4; lv++) {
         for (let vr = 0; vr < 3; vr++) {
           gColB[f * 12 + lv * 3 + vr] = hsl(G.hue + (f === 0 ? 0 : (lv - 2) * 3), G.sat,
-            Math.min(0.9, (0.36 + 0.36 * gShade[f] * G.lmul) * (f === 0 ? 1.04 : GIFT_LM[lv]) * (0.95 + 0.05 * vr)));
+            Math.min(0.88, (0.56 + 0.24 * gShade[f] * G.lmul) * (f === 0 ? 1.03 : GIFT_LM[lv]) * (0.96 + 0.04 * vr)));
         }
       }
-      gColR[f * 2] = hsl(G.rh, G.rs, 0.8 + 0.1 * gShade[f]);
-      gColR[f * 2 + 1] = hsl(G.rh, G.rs * 0.9, 0.86 + 0.1 * gShade[f]);
+      gColR[f * 2] = hsl(G.rh, G.rs, 0.86 + 0.08 * gShade[f]);
+      gColR[f * 2 + 1] = hsl(G.rh, G.rs * 0.8, 0.9 + 0.07 * gShade[f]);
     }
     const o0 = g * GPN;
     for (let i = 0; i < GPN; i++) {
@@ -1428,7 +1433,7 @@ function drawGifts(rot) {
       } else if (ty === 1) put(x, y, c_pipe, gColR[f * 2 + (gfH[o] > G.h * 0.5 ? 1 : 0)], Z + 0.25);
       else if (ty === 2) put(x, y, c_hash, gColR[1], Z + 0.25);
       else if (ty === 3) put(x, y, c_eq, gColR[1], Z + 0.25);
-      else put(x, y, rn & 1 ? c_at : c_hash, hsl(G.rh, G.rs, 0.86 + 0.1 * rn / 255), Z + 0.4);
+      else put(x, y, rn & 1 ? c_at : c_hash, hsl(G.rh, G.rs, 0.9 + 0.07 * rn / 255), Z + 0.4);
     }
     /* a ring of sparks as it pops; gone before the stage ends */
     const bq = (T - t0) / 0.45;
@@ -1507,7 +1512,7 @@ function deerLeg(hx, hy, HIP, SHIN, ph, L1, L2, r0, r1, r2) {
   dCap(hx, hy, kx, ky, r0, r1);
   dCap(kx, ky, kx + L2 * Math.sin(a2), ky - L2 * Math.cos(a2), r1, r2);
 }
-const DEER_BODY = [10.3, 3.32, 1, 6.1, 2.85, 7.13, 8.93, 3.3, 2.05, 8.6, 13.3, 3.33, 1.45, 4.7, 3.8, 7.4, 5.1, 0.77, 0.7, 0.55, 1.52, 0.75, 0.55];
+const DEER_BODY = [10.3, 3.1, 1, 6.1, 2.85, 7.13, 8.93, 2.8, 1.8, 8.6, 13.3, 3.2, 1.45, 4.7, 3.8, 7.4, 5.1, 0.77, 0.66, 0.52, 1.25, 0.7, 0.52];
 /* antlers: seven strokes (x0, y0, x1, y1), measured from the middle of the body */
 const DEER_ANT = [7, 14.5, 3.88, 21, 3.2, 20.7, -0.2, 24.8, 3, 21.6, 3.2, 24.4, 5.6, 16, 4.5, 16.4, 8.2, 14.8, 7.8, 20.6, 6.83, 20.6, 7.1, 23.6, 8.2, 19.6, 9.28, 20.6];
 function buildDeer(ph) {
@@ -1561,15 +1566,15 @@ function prepDeer() {
       const lx0 = (x - ox) / s;
       /* two samples per cell, one above the other, so thin legs and antlers do not break up */
       const d = Math.min(deerSDF(lx0 * pc + lya * ps, -lx0 * ps + lya * pc), deerSDF(lx0 * pc + lyb * ps, -lx0 * ps + lyb * pc)) * s;
-      if (d >= 4) continue;
+      if (d >= 3) continue;
       const idx = y * gcols + x;
-      /* the tree is a little darker close around the deer, so the white figure reads without a heavy shadow */
-      dimA[idx] = lerp(1, lerp(0.5, 1, smooth((d - 0.3) / 3.7)), dimK);
+      /* the tree is only slightly darker right against the deer; there is no dark patch around it */
+      dimA[idx] = lerp(1, lerp(0.7, 1, smooth((d - 0.1) / 2.9)), dimK);
       if (d < 0.12 && deerN < DEER_MAX) { deerI[deerN] = idx; deerD[deerN] = d; deerMask[idx] = 1; deerN++; }
     }
   }
 }
-const DEER_EDGE = [c_at, c_at, c_8, c_hash, c_at, c_8, c_at, c_hash];
+const DEER_EDGE = [c_at, c_8, c_8, c_hash, c_at, c_8, c_at, c_8];
 const DEER_IN = [c_star, c_plus, c_x, c_colon, c_star, c_colon, c_plus, c_colon];
 function drawDeer() {
   const tk = Math.floor(tReal * 4);
@@ -1581,7 +1586,7 @@ function drawDeer() {
       put(x, y, DEER_EDGE[(h2(x * 3 + 1, y * 5 + 2) * 8) & 7], rgba(253, 254, 255), 101);
     } else {
       const hv = h3(x, y, tk + ((x * 7 + y * 3) & 3));
-      if (hv < 0.9) put(x, y, DEER_IN[(hv * 8.8) & 7], hsl(212, 0.7, hv < 0.25 ? 0.93 : 0.85), 100);
+      put(x, y, DEER_IN[(hv * 7.99) & 7], hsl(214, 0.6, hv < 0.3 ? 0.95 : 0.89), 100);
     }
   }
 }
@@ -1650,6 +1655,8 @@ function render() {
       if (r2 < 0) r2 = 0;
       if (g2 < 0) g2 = 0;
       if (b2 < 0) b2 = 0;
+      /* the deer keeps its fine lines: it glows only a little */
+      if (depA[i] === 100 || depA[i] === 101) { r2 *= 0.22; g2 *= 0.22; b2 *= 0.22; }
       gp[i] = r2 + g2 + b2 > 0 ? ((c & 0xff000000) | r2 | (g2 << 8) | (b2 << 16)) >>> 0 : 0;
       if (!rowText) { lctx.fillText(CHS[ch], gridX0 + (x + 0.5) * CW, py); continue; }
       if (first < 0) first = x;
