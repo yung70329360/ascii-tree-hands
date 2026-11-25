@@ -1704,7 +1704,8 @@ let handDraw = [], handDrawT = -9;
 const tracks = [];
 let circleLock = false, lastPointT = -9;
 const lockBuf = [];
-let bothT = null, bothMiss = 0, heartN = 0;
+const clapBuf = [];
+let clapLast = -9;
 const FT = [8, 12, 16, 20], FP = [6, 10, 14, 18], FM = [5, 9, 13, 17], FD = [7, 11, 15, 19];
 const BONES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12],
   [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
@@ -1783,16 +1784,31 @@ function analyse(lm) {
   h.upright = P[0].y - baseY > 0.3 * size;
   h.indexUp = ext[0] && P[5].y - P[8].y > 0.45 * size;
   h.pointing = h.indexUp && !h.open && !(ext[1] && ext[2] && ext[3]);
-  h.snow = !h.upright && (nDown >= 3 || (h.v < 1 / 3 && P[8].y > P[5].y && P[12].y > P[9].y));
+  /* how far apart the five fingertips are, and where the index finger points */
+  let tx = P[4].x, ty = P[4].y, tz = P[4].z;
+  for (let f = 0; f < 4; f++) { tx += P[FT[f]].x; ty += P[FT[f]].y; tz += P[FT[f]].z; }
+  tx /= 5; ty /= 5; tz /= 5;
+  let spr = Math.hypot(P[4].x - tx, P[4].y - ty, P[4].z - tz);
+  for (let f = 0; f < 4; f++) spr += Math.hypot(P[FT[f]].x - tx, P[FT[f]].y - ty, P[FT[f]].z - tz);
+  h.spread = spr / 5 / size;
+  const others = (ext[1] ? 1 : 0) + (ext[2] ? 1 : 0) + (ext[3] ? 1 : 0);
+  h.nExt = nExt;
+  h.idxDz = (P[8].z - P[5].z) / size;
+  h.pointDown = others < 3 && (P[5].y - P[8].y) / size < -0.6 && (ext[0] || d3(P[8], P[5]) > 0.75 * size);
+  h.pointFwd = others < 2 && (ext[0] || h.idxDz < -0.4);
+  h.snow = !h.upright && !h.pointDown && (nDown >= 3 || (h.v < 1 / 3 && P[8].y > P[5].y && P[12].y > P[9].y));
   h.tf = (d3(P[4], P[8]) + d3(P[4], P[12])) / 2 / size;
   h.palmAng = Math.atan2((lm[5].z || 0) - (lm[17].z || 0), (1 - lm[5].x) - (1 - lm[17].x));
   h.midLen = d3(P[12], P[0]) / size;
   h.thumbOnMid = Math.min(d2(P[4], P[12]), d2(P[4], P[11]), d2(P[4], P[10])) < 0.5 * size;
+  /* all five fingertips gathered into one point, and the hand flung open */
+  h.bunch = !ext[0] && h.tf < 0.5 && h.spread < 0.32;
+  h.burst = h.open && h.spread > 0.55;
   return h;
 }
 
 function newTrack() {
-  return { x: 0, y: 0, prevX: null, prevY: null, seen: 0, matched: false, fistT: -9, path: [], snap: [],
+  return { x: 0, y: 0, prevX: null, prevY: null, seen: 0, matched: false, bunchT0: null, bunchT: -9, path: [], snap: [],
     ang: [], angU: 0, angS: 0, angRaw: null, tfPrev: null, tfT: 0, rub: 0 };
 }
 function assignTracks(hs, now) {
@@ -1813,19 +1829,17 @@ function assignTracks(hs, now) {
   for (let j = tracks.length - 1; j >= 0; j--) if (now - tracks[j].seen > 0.6) tracks.splice(j, 1);
 }
 function clearGestures() {
-  for (let i = 0; i < tracks.length; i++) { const tr = tracks[i]; tr.fistT = -9; tr.path.length = 0; tr.snap.length = 0; }
-  bothT = null; heartN = 0;
+  for (let i = 0; i < tracks.length; i++) { const tr = tracks[i]; tr.bunchT0 = null; tr.bunchT = -9; tr.path.length = 0; tr.snap.length = 0; }
+  clapBuf.length = 0; clapLast = -9;
 }
-function handStill(o) {
-  const tr = o.tr;
-  return tr.prevX !== null && Math.hypot(tr.x - tr.prevX, tr.y - tr.prevY) < 0.4 * o.size;
-}
-function circleOK(path, size, needBoth) {
+/* the fingertip has gone at least three quarters of the way round the middle of its own path, and the path is
+   big enough, measured in hand sizes, that finger jitter does not count */
+function circleOK(path, minRad, forward) {
   const n = path.length;
-  if (n < 8) return false;
-  let cx = 0, cy = 0, nb = 0;
-  for (let i = 0; i < n; i++) { cx += path[i].x; cy += path[i].y; if (path[i].both) nb++; }
-  cx /= n; cy /= n;
+  if (n < 6) return false;
+  let cx = 0, cy = 0, size = 0, dz = 0;
+  for (let i = 0; i < n; i++) { cx += path[i].x; cy += path[i].y; size += path[i].s; dz += path[i].dz; }
+  cx /= n; cy /= n; size /= n; dz /= n;
   let sum = 0, rad = 0, pa = 0;
   for (let i = 0; i < n; i++) {
     const dx = path[i].x - cx, dy = path[i].y - cy;
@@ -1839,14 +1853,15 @@ function circleOK(path, size, needBoth) {
     pa = a;
   }
   rad /= n;
-  if (rad < size / 3) return false;
+  if (rad < size * minRad) return false;
   if (Math.abs(sum) < 270 * DEG) return false;
-  if (needBoth && nb / n < 0.8) return false;
+  /* pointing at the viewer: on average the fingertip is clearly nearer to the camera than its knuckle */
+  if (forward && dz > -0.3) return false;
   return true;
 }
 function circleLockUpdate(up, now) {
   let p = null;
-  for (let i = 0; i < up.length; i++) if (up[i].pointing) { p = up[i]; break; }
+  for (let i = 0; i < up.length; i++) if (up[i].pointing || up[i].pointDown) { p = up[i]; break; }
   if (!p) {
     if (now - lastPointT > 0.4) circleLock = false;
     lockBuf.length = 0;
@@ -1903,77 +1918,75 @@ function onResults(res) {
 
   /* twist: one upright hand, not counting a snow hand */
   const ns = vis.filter(h => !h.snow);
-  if (ns.length === 1 && ns[0].upright && state === 'film' && T > 2.1) twistDetect(ns[0], now);
+  if (ns.length === 1 && ns[0].upright && !ns[0].pointing && state === 'film' && T > 2.1) twistDetect(ns[0], now);
   else for (let i = 0; i < tracks.length; i++) { tracks[i].ang.length = 0; tracks[i].angRaw = null; }
 
   if (mode !== 'hands' || state !== 'film' || paused) return;
-  const up = vis.filter(h => h.upright);
-  circleLockUpdate(up, now);
+  /* the stage gestures use every hand the camera sees, also outside the square shown in the camera window */
+  circleLockUpdate(hs, now);
   if (now < ignoreUntil) return;
   const next = stage + 1;
   if (next > 6) return;
 
   if (next === 1) {
-    for (let i = 0; i < up.length; i++) {
-      const h = up[i], tr = h.tr;
-      if (h.fist) tr.fistT = now;
-      else if (h.open && now - tr.fistT <= 1.0) { requestStage(1); return; }
+    /* snap: the thumb holds the middle finger back, then the middle finger slams into the palm.
+       The middle fingertip is suddenly much nearer to the wrist than it was while it was held */
+    for (let i = 0; i < hs.length; i++) {
+      const h = hs[i], s = h.tr.snap;
+      const thMid = d3(h.P[4], h.P[12]) / h.size, thIdx = d3(h.P[4], h.P[8]) / h.size;
+      /* held ready: the thumb tip presses on the middle fingertip, the index fingertip close by */
+      s.push({ t: now, len: h.midLen, prep: h.midLen >= 1.12 && h.midLen <= 1.6 && thMid < 0.36 && thIdx < 0.5 });
+      while (s.length && s[0].t < now - 0.5) s.shift();
+      const cur = s[s.length - 1];
+      let np = 0, longest = 0;
+      for (let j = 0; j < s.length - 1; j++) if (s[j].prep) { np++; if (s[j].len > longest) longest = s[j].len; }
+      if (np >= 3 && !cur.prep && thMid > 0.34 && cur.len < 1.08 && longest - cur.len >= 0.24) { requestStage(1); return; }
     }
-  } else if (next === 2 || next === 4) {
-    for (let i = 0; i < up.length; i++) {
-      const h = up[i], tr = h.tr;
-      if (!h.pointing) {
-        if (tr.path.length && now - tr.path[tr.path.length - 1].t > 0.4) tr.path.length = 0;
+  } else if (next === 2 || next === 4 || next === 6) {
+    /* a circle drawn with the index finger: pointing up for stage 2, pointing down for stage 4,
+       and a large one drawn toward the viewer for stage 6 */
+    for (let i = 0; i < hs.length; i++) {
+      const h = hs[i], tr = h.tr;
+      const ok = next === 2 ? h.pointing : next === 4 ? h.pointDown : h.pointFwd;
+      if (!ok) {
+        if (tr.path.length && now - tr.path[tr.path.length - 1].t > 0.3) tr.path.length = 0;
         continue;
       }
       if (circleLock) continue;
-      let both = false;
-      for (let j = 0; j < up.length; j++) {
-        const o = up[j];
-        if (o !== h && o.open && !o.pointing && d2(o.P[9], h.P[9]) > 1.2 * Math.max(o.size, h.size) && handStill(o)) both = true;
-      }
-      tr.path.push({ t: now, x: h.P[8].x, y: h.P[8].y, both: both });
+      tr.path.push({ t: now, x: h.P[8].x, y: h.P[8].y, s: h.size, dz: h.idxDz });
       while (tr.path.length && tr.path[0].t < now - 1.8) tr.path.shift();
-      if (circleOK(tr.path, h.size, next === 2)) { requestStage(next); return; }
+      if (circleOK(tr.path, next === 6 ? 0.7 : 1 / 3, next === 6)) { requestStage(next); return; }
     }
   } else if (next === 3) {
-    if (!motionDone()) { for (let i = 0; i < tracks.length; i++) tracks[i].snap.length = 0; return; }
-    for (let i = 0; i < vis.length; i++) {
-      const h = vis[i], s = h.tr.snap;
-      s.push({ len: h.midLen, prep: h.upright && h.midLen >= 1.3 && h.thumbOnMid, pt: h.pointing });
-      if (s.length > 6) s.shift();
-      const n = s.length, cur = s[n - 1];
-      if (cur.prep || cur.pt) continue;
-      for (let k = 1; k <= 2; k++) {
-        const a = s[n - 1 - k], b = s[n - 2 - k];
-        if (!a || !b || !a.prep || !b.prep) continue;
-        let longest = 0;
-        for (let j = n - 1 - k; j >= 0 && s[j].prep; j--) longest = Math.max(longest, s[j].len);
-        if (longest - cur.len >= 0.45) { requestStage(3); return; }
+    /* all five fingertips gathered into a point and held for a moment, then the hand flung open */
+    for (let i = 0; i < hs.length; i++) {
+      const h = hs[i], tr = h.tr;
+      if (h.bunch) {
+        if (tr.bunchT0 === null || now - tr.bunchT > 0.25) tr.bunchT0 = now;
+        tr.bunchT = now;
+      } else if (tr.bunchT0 !== null) {
+        if (now - tr.bunchT > 0.4) tr.bunchT0 = null;
+        else if (h.burst && tr.bunchT - tr.bunchT0 >= 0.2) { requestStage(3); return; }
       }
     }
   } else if (next === 5) {
-    let ok = false;
-    if (up.length >= 2) {
-      const a = up[0], b = up[1];
-      ok = a.open && b.open && d2(a.P[9], b.P[9]) >= 1.5 * (a.size + b.size) / 2;
-    }
-    if (ok) {
-      if (bothT === null) bothT = now;
-      bothMiss = now;
-      if (now - bothT >= 0.3) requestStage(5);
-    } else if (bothT !== null && now - bothMiss > 0.15) bothT = null;
-  } else if (next === 6) {
-    let ok = false;
-    if (up.length >= 2) {
-      const a = up[0], b = up[1], S = (a.size + b.size) / 2;
-      ok = d2(a.P[4], b.P[4]) < 0.6 * S &&
-        (d2(a.P[8], b.P[8]) < 0.6 * S || d2(a.P[12], b.P[12]) < 0.6 * S) &&
-        d2(a.P[0], b.P[0]) > 1.1 * S &&
-        a.nBent === 4 && b.nBent === 4 && (a.curlAvg + b.curlAvg) / 2 < 0.9;
-    }
-    heartN = ok ? heartN + 1 : 0;
-    if (heartN >= 4) requestStage(6);
+    /* one clap: two open hands rush toward each other and meet. When the palms touch the camera usually
+       loses one of the hands, so a hand that vanishes at the end of a fast approach counts as the clap too */
+    if (hs.length >= 2) {
+      const a = hs[0], b = hs[1];
+      const dist = d2(a.P[9], b.P[9]) / ((a.size + b.size) / 2);
+      clapBuf.push({ t: now, d: dist, open: a.nExt >= 3 && b.nExt >= 3 });
+      while (clapBuf.length && clapBuf[0].t < now - 0.7) clapBuf.shift();
+      clapLast = now;
+      let far = 0;
+      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].open && clapBuf[j].d > far) far = clapBuf[j].d;
+      if (dist < 1.4 && far - dist >= 1.2) { requestStage(5); return; }
+    } else if (hs.length === 1 && clapBuf.length >= 2 && now - clapLast < 0.3) {
+      const last = clapBuf[clapBuf.length - 1];
+      let far = 0;
+      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].open && clapBuf[j].d > far) far = clapBuf[j].d;
+      if (last.d <= 4.5 && far - last.d >= 1.0) { clapBuf.length = 0; requestStage(5); return; }
+    } else if (now - clapLast > 0.4) clapBuf.length = 0;
   }
 }
 
