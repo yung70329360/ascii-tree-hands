@@ -5,12 +5,30 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ASCII Tree - Hands</title>
 <style>
-html, body { margin: 0; height: 100%; background: #666e7d; overflow: hidden; }
+html, body { margin: 0; height: 100%; background: #05070f; overflow: hidden; }
 canvas { display: block; position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; cursor: pointer; }
+#out { display: none; inset: 0; margin: auto; width: min(100vw, 56.25vh); height: min(100vh, 177.78vw); }
+body.split #c { visibility: hidden; }
+body.split #out { display: block; }
+.tool { position: fixed; top: 14px; width: 36px; height: 36px; padding: 0; border-radius: 50%; cursor: pointer; opacity: 0.4;
+  border: 1.5px solid rgba(255, 255, 255, 0.6); background: rgba(8, 12, 26, 0.6); transition: opacity 0.2s; }
+.tool:hover { opacity: 1; }
+#bSplit { left: 14px; }
+#bRec { left: 60px; }
+#bSplit::before, #bSplit::after { content: ''; position: absolute; left: 10px; width: 14px; border: 1.5px solid #fff; border-radius: 2px; }
+#bSplit::before { top: 8px; height: 4px; }
+#bSplit::after { top: 17px; height: 8px; }
+#bRec::before { content: ''; position: absolute; left: 9px; top: 9px; width: 15px; height: 15px; border-radius: 50%; background: #ff4a4a; }
+body.rec #bRec { opacity: 1; border-color: #ff4a4a; }
+body.rec #bRec::before { border-radius: 2px; left: 11px; top: 11px; width: 11px; height: 11px; animation: blink 1s steps(2, start) infinite; }
+@keyframes blink { to { visibility: hidden; } }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<canvas id="out"></canvas>
+<button id="bSplit" class="tool" title="上下分割畫面：上方鏡頭，下方聖誕樹（鍵盤 L）"></button>
+<button id="bRec" class="tool" title="開始 / 停止錄影（鍵盤 V）"></button>
 <script>
 'use strict';
 
@@ -96,6 +114,13 @@ const bl1 = document.createElement('canvas'), bl1x = bl1.getContext('2d');
 const bl2 = document.createElement('canvas'), bl2x = bl2.getContext('2d');
 const bl3 = document.createElement('canvas'), bl3x = bl3.getContext('2d');
 const tintC = document.createElement('canvas'), tintX = tintC.getContext('2d');
+/* the split view, which is also what gets recorded: the camera across the top, the scene underneath */
+const outC = document.getElementById('out'), outX = outC.getContext('2d');
+/* a 1080 x 1920 picture. The scene is drawn with its stage at three quarters of the full width, so the whole
+   tree, the gifts and the floor fit under the camera picture with some sky above the star for the snow */
+const OUT_W = 1080, OUT_H = 1920, CAM_H = 608, SCENE_H = 1440, SCENE_Y0 = (1440 - (1920 - 608)) / 1440;
+outC.width = OUT_W; outC.height = OUT_H;
+let splitView = false;
 let tintImg = null, tintPx = new Uint32Array(1), glowImg = null, glowPx = new Uint32Array(1);
 
 let dpr = 1, W = 2, H = 2, PW = 2, CW = 1, CH = 1.62, AR = 1 / 1.62, rows = 1, gcols = COLS, extra = 0;
@@ -112,6 +137,7 @@ function resize() {
   dpr = Math.min(2, window.devicePixelRatio || 1);
   W = Math.max(2, Math.floor(window.innerWidth * dpr));
   H = Math.max(2, Math.floor(window.innerHeight * dpr));
+  if (splitView) { dpr = 1; W = OUT_W; H = SCENE_H; }
   cv.width = W; cv.height = H;
   PW = Math.min(W, H * 9 / 16);
   CW = PW / COLS; CH = CW * 1.62; AR = CW / CH;
@@ -460,9 +486,9 @@ function genTree() {
 const NSNOW = 1200;
 const snX = new Float32Array(NSNOW), snY = new Float32Array(NSNOW), snV = new Float32Array(NSNOW);
 const snW = new Float32Array(NSNOW), snP = new Float32Array(NSNOW), snC = new Uint32Array(NSNOW);
-const EXN = 1400;
+const EXN = 2600;
 const exX = new Float32Array(EXN), exY = new Float32Array(EXN), exT = new Float32Array(EXN).fill(-1);
-const exV = new Float32Array(EXN), exA = new Float32Array(EXN), exW = new Float32Array(EXN), exP = new Float32Array(EXN);
+const exV = new Float32Array(EXN), exA = new Float32Array(EXN);
 const exG = new Uint8Array(EXN);
 let exHead = 0, snowAcc = 0;
 let snowSeen = -9, snowRate = 0, snowU = 0.5, snowVv = 0.1;
@@ -578,15 +604,14 @@ function drawSnow() {
     const x = snX[i] * gcols - 0.5 + Math.sin(tReal * snW[i] + snP[i]) * 0.7;
     put(x, y, snV[i] < 0.027 ? c_dot : snV[i] < 0.045 ? c_plus : c_star, snC[i], -1000);
   }
-  /* the snow a hand has sprinkled: the same kind of flakes as the snowfall itself, near and far ones,
-     drifting down slowly with a little sway; each one fades in instead of popping up */
+  /* the snow a hand has sprinkled: a dense curtain of flakes, some bright and some faint, that falls
+     straight down from where it was let go */
   for (let i = 0; i < EXN; i++) {
     if (exT[i] < 0) continue;
     const age = tReal - exT[i];
     const y = exY[i] + exV[i] * rows * age;
     if (y > rows + 1) { exT[i] = -1; continue; }
-    const x = exX[i] + Math.sin(tReal * exW[i] + exP[i]) * 0.9;
-    put(x, y, exG[i], rgba(248, 250, 255, exA[i] * (age < 0.5 ? age * 2 : 1)), -999);
+    put(exX[i], y, exG[i], rgba(248, 250, 255, exA[i] * (age < 0.2 ? age * 5 : 1)), -999);
   }
 }
 function emitSnow(dt) {
@@ -596,17 +621,16 @@ function emitSnow(dt) {
   while (snowAcc >= 1) {
     snowAcc -= 1;
     const i = exHead; exHead = (exHead + 1) % EXN;
-    /* born in a wide, soft cloud around the hand, most of them near it */
-    exX[i] = extra + snowU * COLS + (Math.random() + Math.random() + Math.random() - 1.5) * 26;
-    exY[i] = snowVv * rows - 1 - Math.random() * 7;
+    /* born in a band about two fifths of the stage wide, centred on the hand. In the split view the band sits
+       at the top edge of the part of the scene that is shown, so the snow is there at once */
+    exX[i] = extra + snowU * COLS + (Math.random() + Math.random() - 1) * 25;
+    exY[i] = splitView ? SCENE_Y0 * rows - 3 + Math.random() * 11 : snowVv * rows - 2 - Math.random() * 8;
     exT[i] = tReal;
-    /* a far flake is a faint dot that falls slowly, a near one a bright star that falls a little faster */
+    /* a far flake is fainter and slower, a near one bright and quick */
     const d = Math.random();
-    exV[i] = 0.02 + 0.04 * d;
-    exA[i] = 0.3 + 0.7 * d;
-    exG[i] = d < 0.3 ? c_dot : d < 0.86 ? c_plus : c_star;
-    exW[i] = 0.5 + 1.1 * Math.random();
-    exP[i] = Math.random() * TAU;
+    exV[i] = 0.045 + 0.085 * d;
+    exA[i] = 0.35 + 0.65 * d;
+    exG[i] = d < 0.14 ? c_dot : c_plus;
   }
 }
 
@@ -1768,7 +1792,7 @@ function analyse(lm) {
   const h = { P: P, lm: lm, tr: null };
   const size = Math.max(1e-4, d3(P[0], P[9]));
   h.size = size;
-  const half = Math.min(0.5, 0.5 / camAsp), halfV = Math.min(0.5, 0.5 * camAsp);
+  const half = splitView ? 0.5 : Math.min(0.5, 0.5 / camAsp), halfV = splitView ? 0.5 : Math.min(0.5, 0.5 * camAsp);
   const rx = lm[9].x, ry = lm[9].y;
   h.inside = rx >= 0.5 - half && rx <= 0.5 + half && ry >= 0.5 - halfV && ry <= 0.5 + halfV;
   h.u = 1 - (rx - (0.5 - half)) / (2 * half);
@@ -1930,7 +1954,7 @@ function onResults(res) {
     if (!h.snow) tr.snowT0 = null;
     else {
       if (tr.snowT0 === null) tr.snowT0 = now;
-      if (now - tr.snowT0 >= 0.3) { snowU = h.u; snowVv = h.v; snowRate = clamp((tr.rub - 0.5) * 13, 0, 55); snowSeen = now; }
+      if (now - tr.snowT0 >= 0.3) { snowU = h.u; snowVv = h.v; snowRate = clamp((tr.rub - 0.5) * 34, 0, 130); snowSeen = now; }
     }
   }
 
@@ -2031,7 +2055,54 @@ function onResults(res) {
 }
 
 /* the small camera window: the one thing besides the gradient that is painted */
+/* the split view: the whole camera picture, mirrored, with the hands drawn on it, and under it the part of the
+   scene from just above the star down to the floor */
+function drawSplit() {
+  const sh = OUT_H - CAM_H;
+  outX.setTransform(1, 0, 0, 1, 0, 0);
+  outX.drawImage(cv, 0, Math.round(SCENE_Y0 * H), W, sh, 0, CAM_H, OUT_W, sh);
+  outX.fillStyle = '#080b16';
+  outX.fillRect(0, 0, OUT_W, CAM_H);
+  if (!camReady || !video || video.readyState < 2) return;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return;
+  const ta = OUT_W / CAM_H;
+  let sw = vw, sv = vh;
+  if (vw / vh > ta) sw = vh * ta; else sv = vw / ta;
+  const sx = (vw - sw) / 2, sy = (vh - sv) / 2;
+  outX.save();
+  outX.beginPath();
+  outX.rect(0, 0, OUT_W, CAM_H);
+  outX.clip();
+  outX.translate(OUT_W, 0);
+  outX.scale(-1, 1);
+  outX.drawImage(video, sx, sy, sw, sv, 0, 0, OUT_W, CAM_H);
+  outX.setTransform(1, 0, 0, 1, 0, 0);
+  if (performance.now() / 1000 - handDrawT < 0.35) {
+    outX.lineWidth = 3.5;
+    outX.lineCap = 'round';
+    outX.strokeStyle = 'rgba(255,255,255,0.85)';
+    outX.fillStyle = '#ffffff';
+    for (let k = 0; k < handDraw.length; k++) {
+      const lm = handDraw[k];
+      if (!lm || lm.length < 21) continue;
+      const qx = i => OUT_W - (lm[i].x * vw - sx) / sw * OUT_W, qy = i => (lm[i].y * vh - sy) / sv * CAM_H;
+      outX.beginPath();
+      for (let b = 0; b < BONES.length; b++) { outX.moveTo(qx(BONES[b][0]), qy(BONES[b][0])); outX.lineTo(qx(BONES[b][1]), qy(BONES[b][1])); }
+      outX.stroke();
+      for (let i = 0; i < 21; i++) {
+        const r = i % 4 === 0 && i > 0 ? 9 : 6;
+        outX.beginPath();
+        outX.roundRect(qx(i) - r, qy(i) - r, 2 * r, 2 * r, r);
+        outX.fill();
+      }
+    }
+  }
+  outX.restore();
+}
+
 function drawCamera() {
+  if (splitView) { drawSplit(); return; }
   if (!camReady || !video || video.readyState < 2) return;
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return;
@@ -2074,7 +2145,7 @@ function drawCamera() {
 }
 
 /* ============================== sound ============================== */
-let actx = null, bus = null, noiseBuf = null;
+let actx = null, bus = null, noiseBuf = null, masterOut = null;
 let lastStep = -1, lastGrain = -1;
 function initAudio() {
   if (actx) return;
@@ -2099,6 +2170,7 @@ function initAudio() {
     bus.connect(dry); dry.connect(comp);
     bus.connect(conv); conv.connect(wet); wet.connect(comp);
     comp.connect(master); master.connect(actx.destination);
+    masterOut = master;
     const nl = Math.floor(actx.sampleRate * 2);
     noiseBuf = actx.createBuffer(1, nl, actx.sampleRate);
     const nd = noiseBuf.getChannelData(0);
@@ -2296,8 +2368,68 @@ window.addEventListener('keydown', e => {
   else if (k.length === 1 && k >= '1' && k <= '6') requestStage(k.charCodeAt(0) - 48);
   else if (k === 'd' || k === 'D') twistDir = -twistDir;
   else if (k === 't' || k === 'T') doTwist();
+  else if (k === 'l' || k === 'L') setSplit(!splitView);
+  else if (k === 'v' || k === 'V') { if (recorder) stopRec(); else startRec(); }
 });
 cv.addEventListener('pointerdown', wakeAudio);
+outC.addEventListener('pointerdown', wakeAudio);
+
+/* ---- split view and recording ---- */
+let recorder = null, recChunks = [], recAudio = null;
+function setSplit(on) {
+  if (recorder && !on) return;
+  splitView = on;
+  document.body.classList.toggle('split', on);
+  resize();
+}
+function startRec() {
+  if (recorder || typeof MediaRecorder === 'undefined' || !outC.captureStream) return;
+  setSplit(true);
+  wakeAudio();
+  /* the recording starts with the empty scene, so the film is taken back to its beginning */
+  resetFilm();
+  const stream = outC.captureStream(30);
+  if (actx && masterOut) {
+    if (!recAudio) { recAudio = actx.createMediaStreamDestination(); masterOut.connect(recAudio); }
+    const tracks = recAudio.stream.getAudioTracks();
+    for (let i = 0; i < tracks.length; i++) stream.addTrack(tracks[i]);
+  }
+  const kinds = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+  let kind = '';
+  for (let i = 0; i < kinds.length; i++) if (MediaRecorder.isTypeSupported(kinds[i])) { kind = kinds[i]; break; }
+  try {
+    recorder = new MediaRecorder(stream, kind ? { mimeType: kind, videoBitsPerSecond: 12000000 } : { videoBitsPerSecond: 12000000 });
+  } catch (err) {
+    recorder = null;
+    return;
+  }
+  recChunks = [];
+  const rec = recorder;
+  rec.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+  rec.onstop = () => {
+    const type = rec.mimeType || kind || 'video/webm';
+    const blob = new Blob(recChunks, { type: type });
+    const d = new Date(), p2 = n => String(n).padStart(2, '0');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ascii-tree-' + d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate()) + '-' + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds()) +
+      (type.indexOf('mp4') >= 0 ? '.mp4' : '.webm');
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 20000);
+    recChunks = [];
+    recorder = null;
+    document.body.classList.remove('rec');
+  };
+  rec.start(1000);
+  document.body.classList.add('rec');
+}
+function stopRec() {
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+}
+document.getElementById('bSplit').addEventListener('click', e => { e.currentTarget.blur(); setSplit(!splitView); });
+document.getElementById('bRec').addEventListener('click', e => { e.currentTarget.blur(); if (recorder) stopRec(); else startRec(); });
 window.addEventListener('load', begin);
 window.addEventListener('resize', resize);
 
