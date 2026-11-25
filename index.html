@@ -32,8 +32,8 @@ const easeOutBack = t => {
 const easeInOut15 = g => (g < 0.5 ? Math.pow(2 * g, 1.5) / 2 : 1 - Math.pow(2 * (1 - g), 1.5) / 2);
 const easeInOut15Inv = e => (e < 0.5 ? Math.pow(2 * e, 1 / 1.5) / 2 : 1 - Math.pow(2 * (1 - e), 1 / 1.5) / 2);
 /* the tree rises at an almost steady pace, quick off the mark, and is whole a little after 5.3 s */
-const growF = t => easeInOut15(clamp01((t - 2.1) / 4.35)) * 1.12;
-const tPassOf = f => 2.1 + 4.35 * easeInOut15Inv(clamp01(f / 1.12));
+const growF = t => easeInOut15(clamp01((t - 1.8) / 4.35)) * 1.12;
+const tPassOf = f => 1.8 + 4.35 * easeInOut15Inv(clamp01(f / 1.12));
 
 function mulberry(seed) {
   let a = seed >>> 0;
@@ -420,7 +420,7 @@ function genTree() {
       if (q > 0.8 && u < 0.8) {
         const nfine = Math.max(10, Math.round(TAU * tR[k] * TR / 0.9));
         const pv = h2(k * 17 + 3, Math.floor(a / TAU * nfine) * 13 + Math.floor(u * 26));
-        frost = (0.12 + 0.88 * pv) * (u < 0.22 ? 1 : lerp(1, 0.25, clamp01((u - 0.22) / 0.4))) * (0.6 + 0.4 * shp);
+        frost = (0.12 + 0.88 * pv) * (u < 0.3 ? 1 : lerp(1, 0.12, clamp01((u - 0.3) / 0.3))) * (0.7 + 0.3 * shp);
       }
       if (u < 0.32 && q > 0.55) {
         const nb = rainbowCount[k];
@@ -873,7 +873,7 @@ function drawTrunk() {
    shadow side, frost, coloured light spilling from the nearby bulbs, the star's warm light at the top,
    and a rose glow from the magic circle on the lowest branches */
 function drawTree(rot) {
-  if (T <= 2.1) return;
+  if (T <= 1.8) return;
   const cr = Math.cos(rot), sr = Math.sin(rot);
   const gc = gcols, rw = rows, tH = treeH, bR = baseRow, cx = cxc + 0.5, tl = tilt, q4 = quality, Tn = treeT, Tl = T;
   const dep = depA, cha = chA, cola = colA, dim = dimA;
@@ -896,7 +896,7 @@ function drawTree(rot) {
     qIdx[i] = -1;
     if ((i & 3) >= q4) continue;
     let ext = 1;
-    if (age < 0.25) { const e = 1 - age / 0.25; ext = 1 - e * e; }
+    if (age < 0.12) { const e = 1 - age / 0.12; ext = 1 - 0.3 * e * e; }
     const r = pR[i] * ext;
     const sp = pSin[i] * cr + pCos[i] * sr, cp = pCos[i] * cr - pSin[i] * sr;
     /* the far half of the tree is always hidden behind the near half */
@@ -919,23 +919,24 @@ function drawTree(rot) {
     if (z < tZ[idx] - 2.2) continue;
     const sp = qSp[i], cp = qCp[i], age = qExt[i];
     const w = 0.5 - 0.5 * sp;
-    const light = 0.03 + 0.97 * w * Math.sqrt(w) + 0.04 * cp;
+    const light = 0.03 + 0.97 * w * w * (0.4 + 0.6 * Math.sqrt(w)) + 0.04 * cp;
     let b = pB[i] * 0.003921569;
     if (pSh[i] !== 255) b *= 1 - (1 - pSh[i] * 0.003921569) * shK[pK[i]];
     let bb = b * (0.16 + 0.92 * light);
     let fr = 0;
     /* snow lies on a patch when its own level passes a threshold that drops toward the lit side */
-    if (pFr[i] !== 0 && w > 0.46) { const fd = (w - 0.46) * 1.5; if (pFr[i] * 0.003921569 > 1 - (fd > 0.66 ? 0.66 : fd)) fr = 1; }
+    if (pFr[i] !== 0 && w > 0.54) { const fd = (w - 0.54) * 2.5; if (pFr[i] * 0.003921569 > 1 - (fd > 0.86 ? 0.86 : fd)) fr = 1; }
     let young = 0, mat = 1;
     if (age < 1.7) {
       /* frost settles on a patch well after its leaves are out, each patch at its own moment */
-      if (fr !== 0 && age < 0.55 + 1.1 * (1 - pFr[i] * 0.003921569)) fr = 0;
-      if (age < 0.75) {
-        /* fresh leaves come out bright in the ring's light, then settle into their own shade */
-        mat = age / 0.75; mat = mat * mat * (3 - 2 * mat);
-        const yb = 0.3 + 0.44 * w + 0.1 * b;
+      if (fr !== 0 && age < 0.45 + 0.9 * (1 - pFr[i] * 0.003921569)) fr = 0;
+      if (age < 0.6) {
+        /* fresh leaves are plain rows of '#', bright on the lit side and dark on the other; a moment later they
+           break up and take their own texture and shade */
+        mat = age <= 0.26 ? 0 : (age - 0.26) / 0.34; mat = mat * mat * (3 - 2 * mat);
+        const yb = 0.09 + 0.44 * w * w + 0.05 * b;
         bb = yb + (bb - yb) * mat;
-        if (age < 0.24) young = 1 - age / 0.24;
+        if (age < 0.3) young = 1; else if (age < 0.4) young = 0.3;
       }
     }
     if (washOn) {
@@ -992,17 +993,18 @@ function drawTree(rot) {
       rr *= cn; gg *= cn; bl *= cn;
       if (snow > 0.5) {
         const sv = h2(x * 7 + 3, y * 5 + 1);
-        if (sv < 0.26) { rr += (248 - rr) * 0.92; gg += (251 - gg) * 0.92; bl += (248 - bl) * 0.92; }
-        else if (sv < 0.56) { const k = 0.55 + 0.5 * sv; rr += (156 - rr) * k; gg += (232 - gg) * k; bl += (200 - bl) * k; }
-        else if (sv < 0.78) { const k = 0.2 + 0.7 * sv; rr += (204 - rr) * k; gg += (240 - gg) * k; bl += (172 - bl) * k; }
+        if (sv < 0.46) { rr += (249 - rr) * 0.94; gg += (251 - gg) * 0.94; bl += (249 - bl) * 0.94; }
+        else if (sv < 0.7) { const k = 0.5 + 0.5 * sv; rr += (170 - rr) * k; gg += (236 - gg) * k; bl += (204 - bl) * k; }
+        else if (sv < 0.86) { const k = 0.2 + 0.7 * sv; rr += (204 - rr) * k; gg += (240 - gg) * k; bl += (180 - bl) * k; }
         else { rr = rr * 1.2 + 14; gg = gg * 1.2 + 30; bl = bl * 1.2 + 20; }
       }
       else if (snow > 0.2) { const k = (snow - 0.2) * 0.9; rr += (214 - rr) * k; gg += (240 - gg) * k; bl += (226 - bl) * k; }
       if (ug > 0) { const k = ug * dim[idx]; rr += (232 - rr) * k; gg += (238 - gg) * k; bl += (255 - bl) * k; }
       dep[idx] = tZ[idx];
-      cha[idx] = tYg[idx] * inv > 0.5 ? c_hash : snow > 0.5 && gn < 0.22 ? c_8 : TREE_GLYPHS[gi];
-      /* new growth fades in rather than popping */
-      const fa = (255 * (1 - 0.82 * tYg[idx] * inv)) | 0;
+      const yg = tYg[idx] * inv;
+      /* between the '#' rows and the grown leaves there is one loose row where dots show through */
+      cha[idx] = yg > 0.62 ? c_hash : yg > 0.12 && gn < 0.5 ? c_dot : snow > 0.5 && gn < 0.22 ? c_8 : TREE_GLYPHS[gi];
+      const fa = 255;
       cola[idx] = ((fa << 24) | ((rr > 255 ? 255 : rr) << 16) | ((gg > 255 ? 255 : gg) << 8) | (bl > 255 ? 255 : bl)) >>> 0;
     }
   }
@@ -1022,7 +1024,7 @@ function drawTree(rot) {
 }
 
 function drawBaubles(rot) {
-  if (T <= 2.1) return;
+  if (T <= 1.8) return;
   const cr = Math.cos(rot), sr = Math.sin(rot);
   for (let i = 0; i < baubles.length; i++) {
     const b = baubles[i];
@@ -1083,39 +1085,32 @@ function drawLights(rot) {
    outer rows, white next to the hole on the far half and through the middle on the near half. Small ripples of
    hue break the near half into shorter runs, and the whole pattern drifts round the ring all the time.
    It opens wide around the foot of the tree and then draws in to the width of the growing top. */
-/* the ring's trail. Each copy stays at the height where it was left, so a ladder of echoes hangs below the rising
-   ring. The newest sits right under the ring as a soft dotted line in the ring's colours; as an echo ages it
-   opens outward, turns into dashes, then into single dots, and fades. They show at the two sides, where the sky is
-   behind them; the tree hides the rest. This is what joins one position of the ring to the next. */
-const TRAIL_N = 24, TRAIL_LIFE = 0.95;
-const trT = new Float32Array(TRAIL_N).fill(-99), trY = new Float32Array(TRAIL_N), trR = new Float32Array(TRAIL_N), trB = new Float32Array(TRAIL_N);
+/* the ring's trail. Every echo is a thin dotted outline that stays at the height where the ring left it, opens
+   slowly outward and fades, so three or four of them hang below the rising ring, each wider and fainter than the
+   one above. The tree and the ring hide their middles; what shows is their ends and the near arc at both sides.
+   They are what joins one position of the ring to the next. */
+const TRAIL_N = 12, TRAIL_LIFE = 0.9;
+const trT = new Float32Array(TRAIL_N).fill(-99), trY = new Float32Array(TRAIL_N), trR = new Float32Array(TRAIL_N);
 let trHead = 0, trLast = -99;
 function drawRingTrail() {
   if (T < 1.5) { if (trLast > -99) { trT.fill(-99); trLast = -99; } return; }
+  const rowsPerCol = 0.184 * AR;
   for (let k = 0; k < TRAIL_N; k++) {
     const age = tReal - trT[k];
-    if (age < 0.02 || age >= TRAIL_LIFE) continue;
-    const p = age / TRAIL_LIFE, q = 1 - (1 - p) * (1 - p);
-    const R = trR[k] - 1 + 15 * q, eb = R * trB[k] * (1 - 0.25 * q);
-    const yc = trY[k] + 0.8 * q;
-    const al = (p < 0.12 ? p / 0.12 : Math.pow(1 - (p - 0.12) / 0.88, 1.2)) * 0.8;
-    const N = Math.ceil(TAU * R);
-    const stage = p < 0.3 ? 0 : p < 0.62 ? 1 : 2;
-    const ch = stage === 0 ? c_colon : stage === 1 ? c_minus : c_dot;
-    const wash = 0.3 + 0.6 * p, off = k * 3;
+    if (age < 0.04 || age >= TRAIL_LIFE) continue;
+    const p = age / TRAIL_LIFE;
+    const R = trR[k] + 1 + 11 * age, eb = R * rowsPerCol;
+    const al = (p < 0.1 ? p / 0.1 : p < 0.5 ? 1 : 1 - (p - 0.5) / 0.5) * 0.62;
+    const N = Math.ceil(TAU * R * 1.15);
+    let lx = -999, ly = -999;
     for (let n = 0; n < N; n++) {
-      /* a close dotted line, then dashes of six with gaps of two, then every second dot */
-      const m = n + off;
-      if (stage === 0 ? (m & 7) === 7 : stage === 1 ? (m & 7) > 5 : (m & 1)) continue;
-      const th = n / N * TAU, cz = Math.cos(th), sx = Math.sin(th);
-      const side = sx * sx;
-      if (side < 0.2) continue;
-      let hd = 323 + (th > Math.PI ? th - TAU : th) * 114.59 + tReal * 34;
-      hd = Math.floor(hd - Math.floor(hd / 360) * 360);
-      if (hd > 359) hd = 359;
-      const r = RING_LUT[hd * 3], g = RING_LUT[hd * 3 + 1], b = RING_LUT[hd * 3 + 2];
-      put(cxc + R * sx, yc + eb * cz, ch,
-        rgba(r + (232 - r) * wash, g + (236 - g) * wash, b + (250 - b) * wash, al * (0.15 + 0.85 * side)), -300);
+      const th = n / N * TAU;
+      const x = Math.floor(cxc + R * Math.sin(th) + 0.5), y = Math.floor(trY[k] + eb * Math.cos(th) + 0.5);
+      if (x === lx && y === ly) continue;
+      lx = x; ly = y;
+      /* runs of dots with short breaks, different for every echo */
+      if (h2((x >> 2) + k * 17, y + k * 5) < 0.2) continue;
+      put(x, y, c_dot, rgba(206, 212, 232, al), -300);
     }
   }
 }
@@ -1151,26 +1146,28 @@ function drawRing(F) {
   const entX = (T - 1.5) / 0.3, ent = 1 - Math.pow(1 - clamp01(entX), 1.6);
   const entL = entX < 1 ? ent : 1 + (entX - 1) * 0.9;
   const act = T >= 2.1 ? 1 - shrink : 0;
-  const fr = lerp(Math.min(F + 0.075, 1.03), 1, shrink);
+  /* it starts level with the first leaves and draws a little ahead of the growth as it rises */
+  const fr = lerp(Math.min(F + 0.012 + 0.058 * smooth((T - 1.9) / 1.3), 1.03), 1, shrink);
   const rt = 0.234 * AR;
   /* it is drawn almost as wide as the stage, then closes in on the growing top and stays a little wider than it */
-  const wide = 1 - smooth((T - 1.75) / 1.15);
+  const wide = 1 - smooth((T - 1.5) / 1.1);
   /* the ring breathes with the tree: it draws in as a tier narrows and opens again when the next tier starts.
      Its width is the tier outline at its own height, averaged over the last quarter second so it never jumps */
   let rs = 0;
-  for (let j = 0; j < 8; j++) rs += tierR(Math.min(1, growF(T - j * 0.035) + 0.075));
+  for (let j = 0; j < 8; j++) rs += tierR(Math.min(1, growF(T - j * 0.035) + 0.06));
   /* its outer edge stands a little outside the tier, so it sits on the growing top like a cap */
-  const Ro = lerp(Math.max(8.5, rs / 8 + 5), 58, wide);
-  const Rm = (Ro - 2.2) / 1.15 * (1 - shrink) * (1 + 0.015 * Math.sin(tReal * 6.5)) + 0.01;
-  const rh = Math.min(6.6, 2.2 + Rm * 0.15) * (1 - 0.5 * shrink);
-  const R0 = Rm + rh;
+  const Ro = lerp(Math.max(8.5, rs / 8 + 4), 58, wide) * (1 - shrink) * (1 + 0.012 * Math.sin(tReal * 6.5));
+  /* the tube is fat: seven columns across, so only a slit of the hole shows once the ring has closed in */
+  const rh = Math.min(7, Ro * 0.4);
+  const Rm = Ro - rh + 0.01;
+  const R0 = Ro;
   const yr = baseRow - fr * treeH;
-  const eb = Math.max(0.6, Rm * rt), rv = Math.min(2.6, Math.max(eb * 0.5, Math.min(2.1, rh * 0.5)));
-  /* nine times a second the ring leaves a copy of its outline where it stands */
+  const eb = Math.max(0.6, Rm * rt), rv = Math.min(3, Math.max(1, eb - 0.45));
+  /* four or five times a second the ring leaves an echo of its outline where it stands */
   if (tReal < trLast) trLast = -99;
-  if (entX >= 1 && shrink <= 0 && tReal - trLast > 0.11) {
+  if (entX >= 1 && shrink <= 0 && tReal - trLast > 0.22) {
     trLast = tReal;
-    trT[trHead] = tReal; trY[trHead] = yr + rv * 0.6; trR[trHead] = R0; trB[trHead] = (eb + rv * 0.4) / R0;
+    trT[trHead] = tReal; trY[trHead] = yr; trR[trHead] = R0;
     trHead = (trHead + 1) % TRAIL_N;
   }
   const xa = Math.max(0, Math.floor(cxc - R0 - 3)), xb = Math.min(gcols - 1, Math.ceil(cxc + R0 + 3));
@@ -1196,19 +1193,22 @@ function drawRing(F) {
         tp = 0.2 + 0.8 * smooth(lead / 1.3);
         hot = Math.exp(-lead * 2.4);
       }
-      const z = Rm * sn + 2;
+      /* the near half always passes in front of the tree, the far half behind it */
+      const z = sn > 0 ? 70 + Rm * sn : Rm * sn - 2;
       const a2 = as / tp, s2 = sd / tp;
-      /* the far half is open toward the hole: only the outer part of the tube is drawn there */
-      const cut = sn < 0 ? lerp(-1.3, -0.08, smooth(-sn / 0.6)) : -1.3;
-      if (a2 < 1 && s2 > cut) {
+      if (a2 < 1) {
         /* the two ends of the ring break up into loose strokes instead of stopping at a hard edge */
         const endF = smooth(((cs < 0 ? -cs : cs) - 0.8) / 0.18);
         if (endF > 0 && h2(x * 7 + 1, (y >> 1) * 3 + 2) < endF * 0.55 * (0.3 + a2)) continue;
-        /* light from above; on the far half the side next to the hole faces the viewer and is lit too */
+        /* lit from above and in front. Far half: dim at its top edge, brighter row by row toward the hole.
+           Near half: dim against the hole, white along its crest, coloured again down its outer face */
         const up = Math.sqrt(1 - a2 * a2);
-        let bq = 0.58 * up + (0.07 - 0.13 * sn) * s2 * sn;
+        const nearF = smooth((sn + 0.3) / 0.6);
+        const bqN = 0.62 * up + 0.1 * s2 - (s2 < 0 ? -0.3 * s2 : 0);
+        const bqF = (0.42 - 0.3 * s2) * Math.min(1, 0.45 + (1 - a2) * 3);
+        let bq = bqF + (bqN - bqF) * nearF;
         /* depth of tone changes from row to row and in slow patches along the ring */
-        bq += 0.07 * Math.sin(sd * 4.4 + ang * 3 + tReal * 0.9) + 0.05 * Math.sin(ang * 5 - tReal * 0.6);
+        bq += 0.045 * Math.sin(sd * 4.4 + ang * 3 + tReal * 0.9) + 0.035 * Math.sin(ang * 5 - tReal * 0.6);
         const near = sn > 0 ? sn : 0;
         let hd = 323 + ang * 114.59 + 24 * sd + drift + (14 + 30 * near) * Math.sin(ang * 6 + sd * 2.4 + tReal * 0.8) +
           (6 + 16 * near) * Math.sin(ang * 11 - sd * 3.6 + 1.3 - tReal * 0.5);
@@ -1221,22 +1221,24 @@ function drawRing(F) {
         const mid = (r + g + b) / 3, kk = 0.7 + 0.2 * clamp01((0.34 - bq) * 2);
         r = mid + (r - mid) * kk; g = mid + (g - mid) * kk; b = mid + (b - mid) * kk;
         r += (240 - r) * 0.07; g += (240 - g) * 0.07; b += (246 - b) * 0.07;
-        /* only the near half turns white along its crest; the far half stays in colour */
-        const wk = smooth((bq - 0.5) / 0.2) * smooth((sn + 0.25) / 0.5);
+        /* white: the crest of the near half all the way round; on the far half only one thin row against
+           the hole, and only across the middle */
+        const acs = cs < 0 ? -cs : cs;
+        const wk = smooth((bq - 0.54) / 0.12) * (nearF + (1 - nearF) * 0.85 * smooth((0.8 - acs) / 0.25));
         r += (250 - r) * wk; g += (250 - g) * wk; b += (252 - b) * wk;
         if (hot > 0.02) { r += (255 - r) * hot; g += (255 - g) * hot; b += (255 - b) * hot; }
         if (r < 0) r = 0;
         if (g < 0) g = 0;
         if (b < 0) b = 0;
         /* the rims fade out instead of ending on a hard row, so the ring glides as it rises */
-        const ea = Math.min(1, (1 - a2) * 3.4, (s2 - cut) * 3.4);
+        const ea = Math.min(1, (1 - a2) * 3.4);
         put(x, y, c_hash, rgba(r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b, 0.2 + 0.8 * ea), z);
       } else {
-        /* loose light: dotted filaments fill the hole */
-        const hv = h2(x * 3 + 1, y * 7 + 2);
-        if (sd < 0 && hv < 0.46) {
+        /* a few pairs of dots drift in the slit of the hole */
+        const hv = h2((x >> 1) * 3 + 1, y * 7 + 2);
+        if (sd < 0 && hv < 0.34) {
           const tw = 0.5 + 0.5 * Math.sin(tReal * (2 + 5 * hv) + hv * 40);
-          put(x, y, hv < 0.03 ? c_star : hv < 0.28 ? c_colon : c_dot, rgba(232, 236, 255, 0.2 + 0.6 * tw), z - 0.5);
+          put(x, y, hv < 0.025 ? c_star : c_colon, rgba(232, 236, 255, 0.25 + 0.55 * tw), 69);
         }
       }
     }
