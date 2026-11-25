@@ -460,9 +460,10 @@ function genTree() {
 const NSNOW = 1200;
 const snX = new Float32Array(NSNOW), snY = new Float32Array(NSNOW), snV = new Float32Array(NSNOW);
 const snW = new Float32Array(NSNOW), snP = new Float32Array(NSNOW), snC = new Uint32Array(NSNOW);
-const EXN = 700;
+const EXN = 1400;
 const exX = new Float32Array(EXN), exY = new Float32Array(EXN), exT = new Float32Array(EXN).fill(-1);
-const exV = new Float32Array(EXN), exC = new Uint32Array(EXN);
+const exV = new Float32Array(EXN), exA = new Float32Array(EXN), exW = new Float32Array(EXN), exP = new Float32Array(EXN);
+const exG = new Uint8Array(EXN);
 let exHead = 0, snowAcc = 0;
 let snowSeen = -9, snowRate = 0, snowU = 0.5, snowVv = 0.1;
 
@@ -577,11 +578,15 @@ function drawSnow() {
     const x = snX[i] * gcols - 0.5 + Math.sin(tReal * snW[i] + snP[i]) * 0.7;
     put(x, y, snV[i] < 0.027 ? c_dot : snV[i] < 0.045 ? c_plus : c_star, snC[i], -1000);
   }
+  /* the snow a hand has sprinkled: the same kind of flakes as the snowfall itself, near and far ones,
+     drifting down slowly with a little sway; each one fades in instead of popping up */
   for (let i = 0; i < EXN; i++) {
     if (exT[i] < 0) continue;
-    const y = exY[i] + exV[i] * rows * (tReal - exT[i]);
+    const age = tReal - exT[i];
+    const y = exY[i] + exV[i] * rows * age;
     if (y > rows + 1) { exT[i] = -1; continue; }
-    put(exX[i], y, c_plus, exC[i], -999);
+    const x = exX[i] + Math.sin(tReal * exW[i] + exP[i]) * 0.9;
+    put(x, y, exG[i], rgba(248, 250, 255, exA[i] * (age < 0.5 ? age * 2 : 1)), -999);
   }
 }
 function emitSnow(dt) {
@@ -591,12 +596,17 @@ function emitSnow(dt) {
   while (snowAcc >= 1) {
     snowAcc -= 1;
     const i = exHead; exHead = (exHead + 1) % EXN;
-    exX[i] = extra + snowU * COLS + (Math.random() - 0.5) * 10;
-    exY[i] = snowVv * rows - 2 - Math.random() * 3;
+    /* born in a wide, soft cloud around the hand, most of them near it */
+    exX[i] = extra + snowU * COLS + (Math.random() + Math.random() + Math.random() - 1.5) * 26;
+    exY[i] = snowVv * rows - 1 - Math.random() * 7;
     exT[i] = tReal;
+    /* a far flake is a faint dot that falls slowly, a near one a bright star that falls a little faster */
     const d = Math.random();
-    exV[i] = 0.05 + 0.07 * d;
-    exC[i] = rgba(248, 250, 255, 0.45 + 0.55 * d);
+    exV[i] = 0.02 + 0.04 * d;
+    exA[i] = 0.3 + 0.7 * d;
+    exG[i] = d < 0.3 ? c_dot : d < 0.86 ? c_plus : c_star;
+    exW[i] = 0.5 + 1.1 * Math.random();
+    exP[i] = Math.random() * TAU;
   }
 }
 
@@ -1920,7 +1930,7 @@ function onResults(res) {
     if (!h.snow) tr.snowT0 = null;
     else {
       if (tr.snowT0 === null) tr.snowT0 = now;
-      if (now - tr.snowT0 >= 0.3) { snowU = h.u; snowVv = h.v; snowRate = clamp((tr.rub - 0.5) * 40, 0, 240); snowSeen = now; }
+      if (now - tr.snowT0 >= 0.3) { snowU = h.u; snowVv = h.v; snowRate = clamp((tr.rub - 0.5) * 13, 0, 55); snowSeen = now; }
     }
   }
 
