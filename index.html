@@ -1884,7 +1884,7 @@ async function startCamera() {
     camReady = true;
     if (typeof Hands === 'undefined') throw new Error('hand tracking unavailable');
     hands = new Hands({ locateFile: f => 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/' + f });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     hands.onResults(onResults);
     if (mode === 'pending') mode = 'hands';
   } catch (err) {
@@ -1894,12 +1894,16 @@ async function startCamera() {
 }
 
 function pumpHands(ms) {
-  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < 55) return;
+  /* while a stage of the film is playing, the hands are looked at less often, so the animation has the
+     processor to itself; a gesture cannot open the next stage until the motion is nearly done anyway.
+     In the last second and a half of a stage, and whenever the film waits, tracking runs at full rate */
+  const playing = state === 'film' && mode === 'hands' && !paused && Tlimit !== Infinity && T < Tlimit - 1.5;
+  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < (playing ? 140 : 55)) return;
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return;
   camAsp = vw / vh;
-  if (small.width !== 512) small.width = 512;
-  const sh = Math.max(2, Math.round(512 / camAsp));
+  if (small.width !== 640) small.width = 640;
+  const sh = Math.max(2, Math.round(640 / camAsp));
   if (small.height !== sh) small.height = sh;
   smx.drawImage(video, 0, 0, small.width, small.height);
   handBusy = true; lastSend = ms;
@@ -2096,7 +2100,11 @@ function onResults(res) {
     }
   }
 
-  if (state === 'film' && T > 2.1) for (let i = 0; i < hs.length; i++) twistDetect(hs[i], now);
+  /* the wrist twist is a one-hand gesture: with two hands in the picture (a clap, two open hands) it is not looked for */
+  if (state === 'film' && T > 2.1) {
+    if (hs.length === 1) twistDetect(hs[0], now);
+    else for (let i = 0; i < hs.length; i++) { hs[i].tr.face = 0; hs[i].tr.faceN = 0; }
+  }
 
   if (mode !== 'hands' || state !== 'film' || paused) return;
   /* the stage gestures use every hand the camera sees, also outside the square shown in the camera window */
