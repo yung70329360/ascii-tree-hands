@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ASCII Tree - Hands</title>
 <style>
-html, body { margin: 0; height: 100%; background: #666e7d; overflow: hidden; }
+html, body { margin: 0; height: 100%; background: #1b2242; overflow: hidden; }
 canvas { display: block; position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; cursor: pointer; }
 </style>
 </head>
@@ -141,8 +141,8 @@ function resize() {
   glowImg = bl1x.createImageData(gcols, rows);
   glowPx = new Uint32Array(glowImg.data.buffer);
   const gr = bgx.createLinearGradient(0, 0, 0, H);
-  gr.addColorStop(0, '#323a47'); gr.addColorStop(0.55, '#394250');
-  gr.addColorStop(0.86, '#4b5463'); gr.addColorStop(1, '#666e7d');
+  gr.addColorStop(0, '#050816'); gr.addColorStop(0.5, '#0a1026');
+  gr.addColorStop(0.84, '#111a36'); gr.addColorStop(1, '#1b2242');
   bgx.fillStyle = gr; bgx.fillRect(0, 0, W, H);
   lctx.font = 'bold ' + (0.95 * CH).toFixed(2) + 'px Menlo, Consolas, "DejaVu Sans Mono", monospace';
   lctx.textAlign = 'center'; lctx.textBaseline = 'middle';
@@ -420,7 +420,7 @@ function genTree() {
       if (q > 0.8 && u < 0.8) {
         const nfine = Math.max(10, Math.round(TAU * tR[k] * TR / 0.9));
         const pv = h2(k * 17 + 3, Math.floor(a / TAU * nfine) * 13 + Math.floor(u * 26));
-        frost = (0.12 + 0.88 * pv) * (u < 0.3 ? 1 : lerp(1, 0.12, clamp01((u - 0.3) / 0.3))) * (0.7 + 0.3 * shp);
+        frost = (0.12 + 0.88 * pv) * (u < 0.22 ? 1 : lerp(1, 0.25, clamp01((u - 0.22) / 0.4))) * (0.6 + 0.4 * shp);
       }
       if (u < 0.32 && q > 0.55) {
         const nb = rainbowCount[k];
@@ -919,13 +919,13 @@ function drawTree(rot) {
     if (z < tZ[idx] - 2.2) continue;
     const sp = qSp[i], cp = qCp[i], age = qExt[i];
     const w = 0.5 - 0.5 * sp;
-    const light = 0.03 + 0.97 * w * w * (0.4 + 0.6 * Math.sqrt(w)) + 0.04 * cp;
+    const light = 0.03 + 0.97 * w * Math.sqrt(w) + 0.04 * cp;
     let b = pB[i] * 0.003921569;
     if (pSh[i] !== 255) b *= 1 - (1 - pSh[i] * 0.003921569) * shK[pK[i]];
     let bb = b * (0.16 + 0.92 * light);
     let fr = 0;
     /* snow lies on a patch when its own level passes a threshold that drops toward the lit side */
-    if (pFr[i] !== 0 && w > 0.54) { const fd = (w - 0.54) * 2.5; if (pFr[i] * 0.003921569 > 1 - (fd > 0.86 ? 0.86 : fd)) fr = 1; }
+    if (pFr[i] !== 0 && w > 0.46) { const fd = (w - 0.46) * 1.5; if (pFr[i] * 0.003921569 > 1 - (fd > 0.66 ? 0.66 : fd)) fr = 1; }
     let young = 0, mat = 1;
     if (age < 1.7) {
       /* frost settles on a patch well after its leaves are out, each patch at its own moment */
@@ -993,9 +993,9 @@ function drawTree(rot) {
       rr *= cn; gg *= cn; bl *= cn;
       if (snow > 0.5) {
         const sv = h2(x * 7 + 3, y * 5 + 1);
-        if (sv < 0.46) { rr += (249 - rr) * 0.94; gg += (251 - gg) * 0.94; bl += (249 - bl) * 0.94; }
-        else if (sv < 0.7) { const k = 0.5 + 0.5 * sv; rr += (170 - rr) * k; gg += (236 - gg) * k; bl += (204 - bl) * k; }
-        else if (sv < 0.86) { const k = 0.2 + 0.7 * sv; rr += (204 - rr) * k; gg += (240 - gg) * k; bl += (180 - bl) * k; }
+        if (sv < 0.26) { rr += (248 - rr) * 0.92; gg += (251 - gg) * 0.92; bl += (248 - bl) * 0.92; }
+        else if (sv < 0.56) { const k = 0.55 + 0.5 * sv; rr += (156 - rr) * k; gg += (232 - gg) * k; bl += (200 - bl) * k; }
+        else if (sv < 0.78) { const k = 0.2 + 0.7 * sv; rr += (204 - rr) * k; gg += (240 - gg) * k; bl += (172 - bl) * k; }
         else { rr = rr * 1.2 + 14; gg = gg * 1.2 + 30; bl = bl * 1.2 + 20; }
       }
       else if (snow > 0.2) { const k = (snow - 0.2) * 0.9; rr += (214 - rr) * k; gg += (240 - gg) * k; bl += (226 - bl) * k; }
@@ -1147,7 +1147,7 @@ function drawRing(F) {
   const entL = entX < 1 ? ent : 1 + (entX - 1) * 0.9;
   const act = T >= 2.1 ? 1 - shrink : 0;
   /* it starts level with the first leaves and draws a little ahead of the growth as it rises */
-  const fr = lerp(Math.min(F + 0.012 + 0.058 * smooth((T - 1.9) / 1.3), 1.03), 1, shrink);
+  const fr = lerp(Math.min(F - 0.02 + 0.085 * smooth((T - 1.9) / 1.2), 1.03), 1, shrink);
   const rt = 0.234 * AR;
   /* it is drawn almost as wide as the stage, then closes in on the growing top and stays a little wider than it */
   const wide = 1 - smooth((T - 1.5) / 1.1);
@@ -1162,7 +1162,7 @@ function drawRing(F) {
   const Rm = Ro - rh + 0.01;
   const R0 = Ro;
   const yr = baseRow - fr * treeH;
-  const eb = Math.max(0.6, Rm * rt), rv = Math.min(3, Math.max(1, eb - 0.45));
+  const eb = Math.max(0.6, Rm * rt), rv = Math.min(3 * (0.6 + 0.4 * smooth((T - 1.8) / 0.6)), Math.max(1, eb - 0.45));
   /* four or five times a second the ring leaves an echo of its outline where it stands */
   if (tReal < trLast) trLast = -99;
   if (entX >= 1 && shrink <= 0 && tReal - trLast > 0.22) {
@@ -1172,7 +1172,7 @@ function drawRing(F) {
   }
   const xa = Math.max(0, Math.floor(cxc - R0 - 3)), xb = Math.min(gcols - 1, Math.ceil(cxc + R0 + 3));
   const ya = Math.max(0, Math.floor(yr - eb - rv - 2)), yb = Math.min(rows - 1, Math.ceil(yr + eb + rv + 2));
-  const kx = Rm / rh, ky = eb / rv, drift = tReal * 34, tkr = Math.floor(tReal * 5);
+  const kx = Rm / rh, ky = eb / rv, drift = tReal * 340, tkr = Math.floor(tReal * 5);
   for (let y = ya; y <= yb; y++) {
     const ny = (y - yr) / eb;
     for (let x = xa; x <= xb; x++) {
@@ -1214,17 +1214,16 @@ function drawRing(F) {
           (6 + 16 * near) * Math.sin(ang * 11 - sd * 3.6 + 1.3 - tReal * 0.5);
         hd = Math.floor(hd - Math.floor(hd / 360) * 360);
         if (hd > 359) hd = 359;
-        const lum = Math.min(1.08, 0.5 + 0.84 * bq);
+        const lum = Math.min(1.06, 0.7 + 0.42 * bq);
         let r = RING_LUT[hd * 3] * lum, g = RING_LUT[hd * 3 + 1] * lum, b = RING_LUT[hd * 3 + 2] * lum;
         /* soft pastel: every colour is pulled part of the way toward its own grey, then toward white;
            the dim outer rows keep a little more of their colour so they do not turn muddy */
-        const mid = (r + g + b) / 3, kk = 0.7 + 0.2 * clamp01((0.34 - bq) * 2);
+        const mid = (r + g + b) / 3, kk = 0.86 - 0.3 * smooth((bq - 0.3) / 0.3);
         r = mid + (r - mid) * kk; g = mid + (g - mid) * kk; b = mid + (b - mid) * kk;
-        r += (240 - r) * 0.07; g += (240 - g) * 0.07; b += (246 - b) * 0.07;
         /* white: the crest of the near half all the way round; on the far half only one thin row against
            the hole, and only across the middle */
         const acs = cs < 0 ? -cs : cs;
-        const wk = smooth((bq - 0.54) / 0.12) * (nearF + (1 - nearF) * 0.85 * smooth((0.8 - acs) / 0.25));
+        const wk = smooth((bq - 0.575) / 0.07) * (nearF + (1 - nearF) * 0.85 * smooth((0.8 - acs) / 0.25));
         r += (250 - r) * wk; g += (250 - g) * wk; b += (252 - b) * wk;
         if (hot > 0.02) { r += (255 - r) * hot; g += (255 - g) * hot; b += (255 - b) * hot; }
         if (r < 0) r = 0;
@@ -1232,7 +1231,7 @@ function drawRing(F) {
         if (b < 0) b = 0;
         /* the rims fade out instead of ending on a hard row, so the ring glides as it rises */
         const ea = Math.min(1, (1 - a2) * 3.4);
-        put(x, y, c_hash, rgba(r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b, 0.2 + 0.8 * ea), z);
+        put(x, y, c_hash, rgba(r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b, a2 > 0.93 ? 0.6 : 1), z);
       } else {
         /* a few pairs of dots drift in the slit of the hole */
         const hv = h2((x >> 1) * 3 + 1, y * 7 + 2);
@@ -1352,7 +1351,7 @@ function drawComets(rot) {
       const z = r * Math.cos(phi);
       const fade = clamp01((f - FFLOOR) / 0.14);
       if (j === 0) {
-        const cc = lightCol(rampHue(T * 0.5 + c * 0.5), 0.62, fade);
+        const cc = hsl((T * 150 + c * 180) % 360, 0.6, 0.76, fade);
         const xr = Math.round(x), yr = Math.round(y);
         put(xr, yr, c_at, WHITE, z + 3);
         put(xr - 1, yr, c_at, cc, z + 2.5); put(xr + 1, yr, c_at, cc, z + 2.5);
@@ -1373,7 +1372,7 @@ function drawComets(rot) {
         y += l * l * 5 + (h2(key, c + 9) - 0.5) * 2 * l;
       }
       const ch = frc < 0.18 ? c_hash : frc < 0.45 ? c_star : frc < 0.75 ? c_plus : c_dot;
-      const col = lightCol(rampHue(frc * 1.4 + T * 0.5 + c * 0.5), 0.74 - 0.14 * frc, a);
+      const col = hsl((T * 150 + c * 180 - frc * 200 + 720) % 360, 0.58, 0.77 - 0.07 * frc, a);
       put(x, y, ch, col, z + 1);
       if (frc < 0.14) put(x, y + 1, ch, col, z + 1);
     }
@@ -1477,8 +1476,8 @@ function deerSDF(px, py) {
   }
   return d;
 }
-const FRONT_KEYS = [[34, 18], [8, 2], [-24, -32], [26, -58]];
-const HIND_KEYS = [[22, 40], [-2, 14], [-32, -18], [-8, 38]];
+const FRONT_KEYS = [[15, 8], [1, 0], [-13, -17], [5, -34]];
+const HIND_KEYS = [[12, 24], [-1, 8], [-15, -5], [-5, 26]];
 /* a smooth closed curve through the four key poses, so a leg never stops between them */
 function crom(a, b, c, d, t) {
   return 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (3 * b - a - 3 * c + d) * t * t * t);
@@ -1492,37 +1491,36 @@ function deerLeg(hx, hy, keys, ph, L1, L2, r0, r1, r2) {
   dCap(hx, hy, kx, ky, r0, r1);
   dCap(kx, ky, kx + L2 * Math.sin(a2), ky - L2 * Math.cos(a2), r1, r2);
 }
-/* a small, rounded stag: an egg-shaped body with a full rump and chest, a short upright neck, a neat head with
-   the muzzle forward, antlers that open in a wide V, and slim legs kept under the body */
+/* a stag walking on the spot, seen from the side and facing right: a level, rounded body, a long upright neck at
+   the front with the head carried high and the muzzle forward, two antlers that open in a V above it, a short
+   tail, and four long slim legs that stay nearly upright and bend at the knee as they step */
 function buildDeer(ph) {
   nDE = 0; nDC = 0;
   const st = TAU * 2 * ph;
-  /* the head and antlers lag a little behind the body's bounce; the tail flicks */
-  const hx = 0.3 * Math.cos(st + 0.9), hy = 0.4 * Math.sin(st + 0.9);
-  dEll(0, 0, 7.3, 3.3, 0.02);
-  dEll(4.5, 0.6, 3.3, 3.5, 0.3);
-  dEll(-4.6, 0.5, 3.5, 3.4, -0.1);
-  dCap(5.5, 2.2, 6.2 + hx * 0.6, 8.6 + hy * 0.6, 1.8, 1.4);
-  dEll(7.1 + hx, 10.3 + hy, 2.3, 1.6, -0.2);
-  dCap(8.5 + hx, 10.0 + hy, 11.0 + hx, 9.3 + hy, 0.95, 0.6);
-  dCap(5.9 + hx, 11.3 + hy, 4.4 + hx, 12.3 + hy, 0.55, 0.2);
-  const tl = 0.5 * Math.sin(st + 0.3);
-  dCap(-7.1, 1.9, -8.8, 3.9 + tl, 0.9, 0.35);
-  const ax = hx * 1.25, ay = hy * 1.25;
-  dCap(6.4 + ax, 11.6 + ay, 4.2 + ax, 15.0 + ay, 0.48, 0.4);
-  dCap(4.2 + ax, 15.0 + ay, 3.6 + ax, 19.6 + ay, 0.4, 0.22);
-  dCap(5.3 + ax, 13.4 + ay, 2.6 + ax, 14.0 + ay, 0.34, 0.15);
-  dCap(4.2 + ax, 15.2 + ay, 1.6 + ax, 17.4 + ay, 0.34, 0.15);
-  dCap(3.9 + ax, 17.4 + ay, 5.6 + ax, 19.8 + ay, 0.3, 0.15);
-  dCap(7.8 + ax, 11.7 + ay, 9.6 + ax, 15.0 + ay, 0.48, 0.4);
-  dCap(9.6 + ax, 15.0 + ay, 10.6 + ax, 19.4 + ay, 0.4, 0.22);
-  dCap(8.7 + ax, 13.4 + ay, 11.2 + ax, 13.9 + ay, 0.34, 0.15);
-  dCap(9.6 + ax, 15.2 + ay, 12.4 + ax, 17.2 + ay, 0.34, 0.15);
-  dCap(10.2 + ax, 17.4 + ay, 8.6 + ax, 19.8 + ay, 0.3, 0.15);
-  deerLeg(5.2, -2.2, FRONT_KEYS, ph, 4.4, 5.0, 0.88, 0.58, 0.42);
-  deerLeg(4.1, -2.0, FRONT_KEYS, ph + 0.5, 4.4, 5.0, 0.84, 0.55, 0.42);
-  deerLeg(-4.8, -1.7, HIND_KEYS, ph + 0.5, 4.5, 5.2, 1.05, 0.6, 0.42);
-  deerLeg(-5.8, -1.5, HIND_KEYS, ph, 4.5, 5.2, 0.98, 0.56, 0.42);
+  /* the head nods a little with each step; the tail flicks */
+  const hx = 0.18 * Math.cos(st + 0.9), hy = 0.22 * Math.sin(st + 0.9);
+  dEll(0, 0, 8.3, 3.3, 0);
+  dEll(4.6, 0.25, 3.7, 3.6, 0.15);
+  dEll(-4.9, 0.15, 3.6, 3.5, -0.1);
+  dCap(5.3, 2.4, 5.8 + hx * 0.6, 10.6 + hy * 0.6, 1.75, 1.3);
+  dEll(6.5 + hx, 12.7 + hy, 2.5, 1.9, -0.1);
+  dCap(7.9 + hx, 12.3 + hy, 11.3 + hx, 11.5 + hy, 1.15, 0.75);
+  dCap(5.1 + hx, 13.9 + hy, 3.5 + hx, 15.0 + hy, 0.6, 0.2);
+  const tl = 0.4 * Math.sin(st + 0.3);
+  dCap(-8.1, 2.2, -9.5, 3.7 + tl, 0.9, 0.4);
+  const ax = hx * 1.2, ay = hy * 1.2;
+  dCap(5.7 + ax, 14.3 + ay, 3.7 + ax, 18.6 + ay, 0.5, 0.42);
+  dCap(3.7 + ax, 18.6 + ay, 2.5 + ax, 23.0 + ay, 0.42, 0.25);
+  dCap(4.7 + ax, 16.5 + ay, 2.1 + ax, 17.7 + ay, 0.36, 0.15);
+  dCap(3.5 + ax, 19.3 + ay, 1.0 + ax, 21.1 + ay, 0.34, 0.15);
+  dCap(7.3 + ax, 14.3 + ay, 8.9 + ax, 18.6 + ay, 0.5, 0.42);
+  dCap(8.9 + ax, 18.6 + ay, 9.7 + ax, 23.0 + ay, 0.42, 0.25);
+  dCap(8.1 + ax, 16.5 + ay, 10.7 + ax, 17.7 + ay, 0.36, 0.15);
+  dCap(9.1 + ax, 19.4 + ay, 11.7 + ax, 21.3 + ay, 0.34, 0.15);
+  deerLeg(5.6, -2.2, FRONT_KEYS, ph, 5.8, 6.2, 0.95, 0.62, 0.45);
+  deerLeg(3.6, -2.4, FRONT_KEYS, ph + 0.5, 5.8, 6.2, 0.9, 0.6, 0.45);
+  deerLeg(-4.6, -2.3, HIND_KEYS, ph + 0.5, 5.8, 6.2, 1.1, 0.64, 0.45);
+  deerLeg(-6.5, -2.1, HIND_KEYS, ph, 5.8, 6.2, 1.05, 0.6, 0.45);
 }
 const DEER_MAX = 8000;
 const deerI = new Int32Array(DEER_MAX), deerD = new Float32Array(DEER_MAX);
@@ -1536,18 +1534,17 @@ function prepDeer() {
   const e = (T - 10.85) / 1.4;
   deerE = e;
   if (e <= 0) return;
-  const s = Math.max(0.05, 1.1 * easeOutBack(e)), mv = easeOutCubic(e);
-  const ph = fract(tReal * 0.92), st = TAU * 2 * ph;
+  const s = Math.max(0.05, 1.15 * easeOutBack(e)), mv = easeOutCubic(e);
+  const ph = fract(tReal * 0.8), st = TAU * 2 * ph;
   buildDeer(ph);
-  /* a bounding stride: it springs up quickly, hangs, and comes down; the body rocks with it */
-  const hop = Math.pow(0.5 + 0.5 * Math.sin(st), 0.7);
-  const ox = cxc + 1.5 * mv + 0.5 * Math.sin(st * 0.5 + 0.4) * mv;
-  const oy = lerp(baseRow - 0.45 * treeH, baseRow - 0.235 * treeH, mv) - (hop - 0.5) * 1.5 * AR * s;
+  /* a walk: the body rises and settles a little twice per stride and barely tips */
+  const ox = cxc + 0.5 * mv;
+  const oy = lerp(baseRow - 0.45 * treeH, baseRow - 0.225 * treeH, mv) - 0.3 * Math.sin(st) * AR * s;
   deerOX = ox; deerOY = oy;
-  const rock = 0.075 * Math.sin(st - 0.9);
+  const rock = 0.018 * Math.sin(st - 0.9);
   const pc = Math.cos(rock), ps = Math.sin(rock);
-  const x0 = Math.max(0, Math.floor(ox - 16 * s)), x1 = Math.min(gcols - 1, Math.ceil(ox + 18 * s));
-  const y0 = Math.max(0, Math.floor(oy - 26 * AR * s)), y1 = Math.min(rows - 1, Math.ceil(oy + 16 * AR * s));
+  const x0 = Math.max(0, Math.floor(ox - 14 * s)), x1 = Math.min(gcols - 1, Math.ceil(ox + 16 * s));
+  const y0 = Math.max(0, Math.floor(oy - 27 * AR * s)), y1 = Math.min(rows - 1, Math.ceil(oy + 18 * AR * s));
   const dimK = clamp01(e * 1.5);
   for (let y = y0; y <= y1; y++) {
     const lya = -(y - 0.25 - oy) / (AR * s), lyb = -(y + 0.25 - oy) / (AR * s);
@@ -1555,9 +1552,10 @@ function prepDeer() {
       const lx0 = (x - ox) / s;
       /* two samples per cell, one above the other, so thin legs and antlers do not break up */
       const d = Math.min(deerSDF(lx0 * pc + lya * ps, -lx0 * ps + lya * pc), deerSDF(lx0 * pc + lyb * ps, -lx0 * ps + lyb * pc)) * s;
-      if (d >= 5) continue;
+      if (d >= 2.6) continue;
       const idx = y * gcols + x;
-      dimA[idx] = lerp(1, lerp(0.22, 1, smooth((d - 0.3) / 4.7)), dimK);
+      /* the tree is only a little darker right against the deer, so its outline reads without a heavy shadow */
+      dimA[idx] = lerp(1, lerp(0.58, 1, smooth((d - 0.1) / 2.5)), dimK);
       /* it does not pop in whole: it gathers out of sparkles */
       if (d < 0.12 && deerN < DEER_MAX && (e > 0.6 || h2(x + 5, y + 9) < e * 1.8)) { deerI[deerN] = idx; deerD[deerN] = d; deerMask[idx] = 1; deerN++; }
     }
