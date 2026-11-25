@@ -7,10 +7,23 @@
 <style>
 html, body { margin: 0; height: 100%; background: #1b2242; overflow: hidden; }
 canvas { display: block; position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; cursor: pointer; }
+#out { display: none; inset: 0; margin: auto; width: min(100vw, 56.25vh); height: min(100vh, 177.78vw); }
+body.split #c { visibility: hidden; }
+body.split #out { display: block; }
+.tool { position: fixed; top: 14px; width: 36px; height: 36px; padding: 0; border-radius: 50%; cursor: pointer; opacity: 0.4;
+  border: 1.5px solid rgba(255, 255, 255, 0.6); background: rgba(8, 12, 26, 0.6); transition: opacity 0.2s; }
+.tool:hover { opacity: 1; }
+#bSplit { left: 14px; }
+#bSplit::before, #bSplit::after { content: ''; position: absolute; left: 10px; width: 14px; border: 1.5px solid #fff; border-radius: 2px; }
+#bSplit::before { top: 8px; height: 4px; }
+#bSplit::after { top: 17px; height: 8px; }
+body.split { background: #04060f; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<canvas id="out"></canvas>
+<button id="bSplit" class="tool" title="上下分割畫面：上方鏡頭，下方聖誕樹（鍵盤 L）"></button>
 <script>
 'use strict';
 
@@ -97,6 +110,21 @@ const bl1 = document.createElement('canvas'), bl1x = bl1.getContext('2d');
 const bl2 = document.createElement('canvas'), bl2x = bl2.getContext('2d');
 const bl3 = document.createElement('canvas'), bl3x = bl3.getContext('2d');
 const tintC = document.createElement('canvas'), tintX = tintC.getContext('2d');
+/* the split view: the camera across the top, the scene underneath */
+const outC = document.getElementById('out'), outX = outC.getContext('2d');
+/* a 1080 x 1920 picture, 9:16. The scene is drawn with its stage at three quarters of the full width, so the whole
+   tree, the gifts and the floor fit under the camera picture with some sky above the star for the snow */
+const OUT_W = 1080, OUT_H = 1920, CAM_H = 608, SCENE_H = 1440, SCENE_Y0 = (1440 - (1920 - 608)) / 1440;
+/* the camera picture is kept for a moment, so it can be shown together with the hand positions found in it */
+const RING = 10, ringC = [], ringX = [], ringT = new Float64Array(RING), resQ = [];
+let ringHead = 0, sendMs = 0;
+for (let i = 0; i < RING; i++) {
+  const c = document.createElement('canvas');
+  c.width = OUT_W; c.height = CAM_H;
+  ringC.push(c); ringX.push(c.getContext('2d'));
+}
+outC.width = OUT_W; outC.height = OUT_H;
+let splitView = false;
 let tintImg = null, tintPx = new Uint32Array(1), glowImg = null, glowPx = new Uint32Array(1);
 let rowText = false, textOff = 0;
 
@@ -114,6 +142,7 @@ function resize() {
   dpr = Math.min(2, window.devicePixelRatio || 1, Math.max(0.8, Math.sqrt(2.6e6 / Math.max(1, window.innerWidth * window.innerHeight))));
   W = Math.max(2, Math.floor(window.innerWidth * dpr));
   H = Math.max(2, Math.floor(window.innerHeight * dpr));
+  if (splitView) { dpr = 1; W = OUT_W; H = SCENE_H; }
   cv.width = W; cv.height = H;
   PW = Math.min(W, H * 9 / 16);
   CW = PW / COLS; CH = CW * 1.62; AR = CW / CH;
@@ -206,7 +235,7 @@ let tReal = 0, T = 0, prevT = 0, Tlimit = 0, stage = 0, treeT = 0;
 let lastMs = 0;
 let pending = null;
 let ignoreUntil = 0;
-let quality = 4, emaDt = 5, slowT = 0, emaFr = 17, lite = false;
+let quality = 4, emaDt = 5, slowT = 0;
 const STAGE_END = [0, 1.5, 5.6, 6.25, 9.25, 10.8, Infinity];
 const twists = [];
 let twistDir = 1, twistCool = 0;
@@ -214,12 +243,12 @@ let twistDir = 1, twistCool = 0;
 function motionDone() { return T >= Tlimit - 1e-4; }
 function twistExtra() {
   let e = 0;
-  for (let i = 0; i < twists.length; i++) e += (Math.PI / 3) * easeOutCubic((tReal - twists[i]) / 1.5);
+  for (let i = 0; i < twists.length; i++) e += twists[i].d * (Math.PI / 3) * easeOutCubic((tReal - twists[i].t) / 1.5);
   return e;
 }
 function doTwist() {
   if (state !== 'film' || T <= 2.1) return;
-  twists.push(tReal);
+  twists.push({ t: tReal, d: twistDir });
   if (twists.length > 12) twists.shift();
 }
 
@@ -467,7 +496,7 @@ function genTree() {
 const NSNOW = 1200;
 const snX = new Float32Array(NSNOW), snY = new Float32Array(NSNOW), snV = new Float32Array(NSNOW);
 const snW = new Float32Array(NSNOW), snP = new Float32Array(NSNOW), snC = new Uint32Array(NSNOW);
-const EXN = 3200;
+const EXN = 3600;
 const exX = new Float32Array(EXN), exY = new Float32Array(EXN), exT = new Float32Array(EXN).fill(-1);
 const exV = new Float32Array(EXN), exA = new Float32Array(EXN), exG = new Uint8Array(EXN);
 let exHead = 0, snowAcc = 0;
@@ -580,43 +609,37 @@ function drawSnow() {
     if (fy < 0.97) put(x, y0, ch, (rgb | (((al * (1 - fy)) | 0) << 24)) >>> 0, -1000);
     if (fy > 0.03) put(x, y0 + 1, ch, (rgb | (((al * fy) | 0) << 24)) >>> 0, -1000);
   }
-  /* the snow a hand has sprinkled: the same bright little crosses as the falling snow, many more of them, in
-     loose strings one above the other. They fall straight down in front of the tree and thin out below it */
-  const fadeA = rows * 0.58, fadeB = rows * 0.8;
+  /* the snow a hand has sprinkled: a cloud of bright flakes that falls straight down from where it was let go */
   for (let i = 0; i < EXN; i++) {
     if (exT[i] < 0) continue;
     const age = tReal - exT[i];
     const y = exY[i] + exV[i] * rows * age;
-    if (y > fadeB) { exT[i] = -1; continue; }
-    let a = age < 0.15 ? age / 0.15 : 1;
-    if (y > fadeA) a *= 1 - (y - fadeA) / (fadeB - fadeA);
-    put(exX[i], y, exG[i], rgba(250, 251, 255, a), 95);
+    if (y > rows + 1) { exT[i] = -1; continue; }
+    put(exX[i], y, exG[i], rgba(248, 250, 255, exA[i] * (age < 0.2 ? age * 5 : 1)), -999);
   }
 }
-const snowCols = new Float32Array(16);
-let snowColT = -9;
 function emitSnow(dt) {
   const now = performance.now() / 1000;
-  if (now - snowSeen > 0.6 || snowRate <= 0) { snowAcc = 0; return; }
-  /* sixteen columns are "open" at a time and one of them moves every tenth of a second: most flakes drop from
-     an open column, which is what makes the strings */
-  const cx = extra + clamp(snowU, 0.18, 0.82) * COLS;
-  if (now - snowColT > 0.1) {
-    snowColT = now;
-    const k = Math.floor(Math.random() * 16);
-    snowCols[k] = Math.round(cx + (Math.random() + Math.random() - 1) * 30);
-    for (let j = 0; j < 16; j++) if (snowCols[j] === 0) snowCols[j] = Math.round(cx + (Math.random() + Math.random() - 1) * 30);
-  }
+  if (now - snowSeen > 1.2 || snowRate <= 0) { snowAcc = 0; return; }
   snowAcc += snowRate * dt;
   while (snowAcc >= 1) {
     snowAcc -= 1;
     const i = exHead; exHead = (exHead + 1) % EXN;
-    exX[i] = Math.random() < 0.6 ? snowCols[Math.floor(Math.random() * 16)] : Math.round(cx + (Math.random() + Math.random() - 1) * 36);
-    exY[i] = rows * (0.04 + 0.24 * Math.random());
+    /* a loose cloud of bright flakes, born around the place the hand is over: most of them within a third of
+       the stage, one in eight thrown out twice as far. In the split view the hand is looked for across the
+       whole camera picture, so its place is taken across the whole width that is shown, and the cloud is
+       born at the top edge of the part of the scene in view, so the snow is there at once */
+    const wide = Math.random() < 0.125 ? 2 : 1;
+    const cx = splitView ? snowU * gcols : extra + snowU * COLS;
+    exX[i] = cx + (Math.random() + Math.random() - 1) * 30 * wide;
+    exY[i] = splitView ? SCENE_Y0 * rows - 3 + Math.random() * 13 : snowVv * rows - 2 - Math.random() * 8;
     exT[i] = tReal;
-    exV[i] = 0.07 + 0.045 * Math.random();
-    exA[i] = 1;
-    exG[i] = Math.random() < 0.9 ? c_plus : c_star;
+    /* every flake is a bright plus sign; they fall at very different speeds, so the cloud draws out into a
+       long veil instead of coming down as one block */
+    const d = Math.random();
+    exV[i] = 0.05 + 0.135 * d * d + 0.03 * Math.random();
+    exA[i] = 0.72 + 0.28 * Math.random();
+    exG[i] = c_plus;
   }
 }
 
@@ -1766,12 +1789,10 @@ function render() {
   ctx.globalCompositeOperation = 'screen';
   ctx.globalAlpha = 0.15;
   ctx.drawImage(bl1, gridX0, 0, gw, gh);
-  if (!lite) {
-    ctx.globalAlpha = 0.13;
-    ctx.drawImage(bl2, gridX0, 0, gw, gh);
-    ctx.globalAlpha = 0.11;
-    ctx.drawImage(bl3, gridX0, 0, gw, gh);
-  }
+  ctx.globalAlpha = 0.13;
+  ctx.drawImage(bl2, gridX0, 0, gw, gh);
+  ctx.globalAlpha = 0.11;
+  ctx.drawImage(bl3, gridX0, 0, gw, gh);
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
   drawCamera();
@@ -1779,8 +1800,10 @@ function render() {
 
 function frame(ms) {
   requestAnimationFrame(frame);
+  /* while the hands are tracked, and in the split view, the scene is drawn at an even 30 frames a second:
+     the tracker shares the thread and the graphics card, and this keeps the motion regular */
+  if ((splitView || mode === 'hands') && ms - lastMs < 30) return;
   const dt = document.hidden ? 0 : Math.min(0.25, Math.max(0, (ms - lastMs) / 1000));
-  if (dt > 0) emaFr = emaFr * 0.96 + dt * 40;
   lastMs = ms;
   if (!paused) {
     tReal += dt;
@@ -1788,7 +1811,7 @@ function frame(ms) {
     if (state === 'film') {
       const now = performance.now() / 1000;
       if (pending) {
-        if (now - pending.t > 2) pending = null;
+        if (now - pending.t > 6) pending = null;
         else if (motionDone()) openStage(pending.n);
       }
       prevT = T;
@@ -1807,14 +1830,9 @@ function frame(ms) {
   /* thin the point cloud only if projecting it is what costs the frame rate */
   if (state === 'film' && T > 3 && !paused) {
     emaDt = emaDt * 0.95 + cost * 0.05;
-    /* if frames come slowly, whatever the reason, the page first drops the two widest glow passes and then
-       thins the tree, so the motion stays fluid */
-    if (emaDt > 14 || emaFr > 25) {
+    if (emaDt > 14) {
       slowT += dt;
-      if (slowT > 1.5) {
-        if (!lite) lite = true; else if (quality > 2) quality--;
-        slowT = 0; emaDt = 6; emaFr = 17;
-      }
+      if (slowT > 1.5 && quality > 2) { quality--; slowT = 0; emaDt = 6; }
     } else slowT = 0;
   }
 }
@@ -1869,7 +1887,7 @@ const tracks = [];
 let circleLock = false, lastPointT = -9;
 const lockBuf = [];
 const clapBuf = [], fwdPath = [];
-let clapTogether = -9;
+let clapOne = 0;
 let clapLast = -9;
 const FT = [8, 12, 16, 20], FP = [6, 10, 14, 18], FM = [5, 9, 13, 17], FD = [7, 11, 15, 19];
 const BONES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12],
@@ -1898,19 +1916,17 @@ async function startCamera() {
 }
 
 function pumpHands(ms) {
-  /* while a stage of the film is playing, the hands are looked at less often, so the animation has the
-     processor to itself; a gesture cannot open the next stage until the motion is nearly done anyway.
-     In the last second and a half of a stage, and whenever the film waits, tracking runs at full rate */
-  const playing = state === 'film' && mode === 'hands' && !paused && Tlimit !== Infinity && T < Tlimit - 1.5;
-  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < (playing ? 140 : 55)) return;
+  /* the tracker and the drawing share one thread and one graphics card. In the split view, where the picture
+     is also being encoded as video, the tracker is asked a little less often so the frames stay regular;
+     except while the clap is awaited, which is over in a moment and needs every look it can get */
+  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < (splitView && stage !== 4 ? 75 : 55)) return;
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return;
   camAsp = vw / vh;
-  if (small.width !== 640) small.width = 640;
   const sh = Math.max(2, Math.round(640 / camAsp));
   if (small.height !== sh) small.height = sh;
   smx.drawImage(video, 0, 0, small.width, small.height);
-  handBusy = true; lastSend = ms;
+  handBusy = true; lastSend = ms; sendMs = performance.now();
   hands.send({ image: small }).then(() => { handBusy = false; }, () => {
     handBusy = false; handFail++;
     if (handFail > 3 && !handOK) { hands = null; setAuto(); }
@@ -1927,7 +1943,7 @@ function analyse(lm) {
   const h = { P: P, lm: lm, tr: null };
   const size = Math.max(1e-4, d3(P[0], P[9]));
   h.size = size;
-  const half = Math.min(0.5, 0.5 / camAsp), halfV = Math.min(0.5, 0.5 * camAsp);
+  const half = splitView ? 0.5 : Math.min(0.5, 0.5 / camAsp), halfV = splitView ? 0.5 : Math.min(0.5, 0.5 * camAsp);
   const rx = lm[9].x, ry = lm[9].y;
   h.inside = rx >= 0.5 - half && rx <= 0.5 + half && ry >= 0.5 - halfV && ry <= 0.5 + halfV;
   h.u = 1 - (rx - (0.5 - half)) / (2 * half);
@@ -2002,13 +2018,13 @@ function assignTracks(hs, now) {
 }
 function clearGestures() {
   for (let i = 0; i < tracks.length; i++) { const tr = tracks[i]; tr.bunchT0 = null; tr.bunchT = -9; tr.path.length = 0; tr.snap.length = 0; }
-  clapBuf.length = 0; clapLast = -9; clapTogether = -9; fwdPath.length = 0;
+  clapBuf.length = 0; clapLast = -9; clapOne = 0; fwdPath.length = 0;
 }
 /* the fingertip has gone far enough round the middle of its own path (three quarters of a turn for the upright
    and the downward circle), and the path is big enough, measured in hand sizes, that finger jitter does not count */
 function circleOK(path, minRad, minTurn) {
   const n = path.length;
-  if (n < 6) return false;
+  if (n < 5) return false;
   let cx = 0, cy = 0, size = 0;
   for (let i = 0; i < n; i++) { cx += path[i].x; cy += path[i].y; size += path[i].s; }
   cx /= n; cy /= n; size /= n;
@@ -2066,8 +2082,10 @@ function onResults(res) {
   const now = performance.now() / 1000;
   const raw = (res && res.multiHandLandmarks) || [];
   handDraw = raw; handDrawT = now;
-  /* keep the analysed picture, so the points and lines sit exactly on the hand they belong to */
-  if (small.width > 2 && small.height > 2) {
+  resQ.push({ t: sendMs, a: performance.now(), hands: raw });
+  if (resQ.length > 4) resQ.shift();
+  /* for the small camera window: keep the analysed picture, so the points and lines sit exactly on the hand */
+  if (!splitView && small.width > 2 && small.height > 2) {
     if (camShot.width !== small.width || camShot.height !== small.height) { camShot.width = small.width; camShot.height = small.height; }
     camShotX.drawImage(small, 0, 0);
     camShotT = now;
@@ -2078,14 +2096,19 @@ function onResults(res) {
     if (!raw[i] || raw[i].length < 21) continue;
     const h = analyse(raw[i]);
     h.side = sides[i] ? sides[i].label : '';
-    hs.push(h);
+    /* now and then the tracker reports one hand twice, almost in the same place. The copy is dropped:
+       it would be followed as a hand of its own and take half of a gesture away from the real one */
+    let twin = false;
+    for (let j = 0; j < hs.length; j++) {
+      const d = d2(hs[j].P[9], h.P[9]) / Math.max(hs[j].size, h.size);
+      if (d < 0.3 || (d < 0.6 && hs[j].side === h.side)) twin = true;
+    }
+    if (!twin) hs.push(h);
   }
   assignTracks(hs, now);
   const vis = hs.filter(h => h.inside);
 
-  /* snow: rubbing thumb against fingertips. Not while a circle is being drawn with a finger pointing up or
-     down: a circling finger can pass through the same hand shape */
-  const circling = mode === 'hands' && (stage === 1 || stage === 3) && now - lastPointT < 1.0;
+  /* snow: rubbing thumb against fingertips, at any time */
   for (let i = 0; i < vis.length; i++) {
     const h = vis[i], tr = h.tr;
     if (tr.tfPrev !== null && now > tr.tfT) {
@@ -2094,21 +2117,14 @@ function onResults(res) {
     }
     tr.tfPrev = h.tf; tr.tfT = now;
     /* the sprinkling pose has to be held for a moment, so a hand that only passes through it does not snow */
-    if (!h.snow || circling || tr.path.length > 0) tr.snowT0 = null;
+    if (!h.snow) tr.snowT0 = null;
     else {
       if (tr.snowT0 === null) tr.snowT0 = now;
-      /* the pose alone is not enough: the fingers have to be rubbing */
-      /* while the film waits for the gathered-fingers gesture, which looks the same for a moment, the pose
-         has to be held clearly longer */
-      if (now - tr.snowT0 >= (mode === 'hands' && stage === 2 ? 0.9 : 0.3) && tr.rub > 0.5) { snowU = h.u; snowVv = h.v; snowRate = clamp(85 + (tr.rub - 0.5) * 30, 85, 150); snowSeen = now; }
+      if (now - tr.snowT0 >= 0.3) { snowU = h.u; snowVv = h.v; snowRate = clamp((tr.rub - 0.5) * 46, 0, 170); snowSeen = now; }
     }
   }
 
-  /* the wrist twist is a one-hand gesture: with two hands in the picture (a clap, two open hands) it is not looked for */
-  if (state === 'film' && T > 2.1) {
-    if (hs.length === 1) twistDetect(hs[0], now);
-    else for (let i = 0; i < hs.length; i++) { hs[i].tr.face = 0; hs[i].tr.faceN = 0; }
-  }
+  if (state === 'film' && T > 2.1) for (let i = 0; i < hs.length; i++) twistDetect(hs[i], now);
 
   if (mode !== 'hands' || state !== 'film' || paused) return;
   /* the stage gestures use every hand the camera sees, also outside the square shown in the camera window */
@@ -2137,7 +2153,7 @@ function onResults(res) {
       const h = hs[i], tr = h.tr;
       const ok = next === 2 ? h.pointing : h.pointDown;
       if (!ok) {
-        if (tr.path.length && now - tr.path[tr.path.length - 1].t > 0.3) tr.path.length = 0;
+        if (tr.path.length && now - tr.path[tr.path.length - 1].t > 0.5) tr.path.length = 0;
         continue;
       }
       if (circleLock) continue;
@@ -2161,51 +2177,146 @@ function onResults(res) {
     for (let i = 0; i < hs.length; i++) {
       const h = hs[i], tr = h.tr;
       if (h.bunch) {
-        if (tr.bunchT0 === null || now - tr.bunchT > 0.25) tr.bunchT0 = now;
+        if (tr.bunchT0 === null || now - tr.bunchT > 0.4) tr.bunchT0 = now;
         tr.bunchT = now;
       } else if (tr.bunchT0 !== null) {
-        if (now - tr.bunchT > 0.4) tr.bunchT0 = null;
-        else if (h.burst && tr.bunchT - tr.bunchT0 >= 0.2) { requestStage(3); return; }
+        if (now - tr.bunchT > 0.55) tr.bunchT0 = null;
+        else if (h.burst && tr.bunchT - tr.bunchT0 >= 0.12) { requestStage(3); return; }
       }
     }
   } else if (next === 5) {
-    /* one clap. Any of these counts:
-       - a left and a right hand, both open, with their palms together;
-       - two open hands that come toward each other and become one: when the palms touch, the camera usually
-         loses one hand, and the hand that is left sits where the middle between them was */
-    /* the tracker sometimes reports one hand twice for a frame; two "hands" on the same spot are one hand */
-    let two = hs.length >= 2;
-    let dist = 0, S = 1;
-    if (two) {
-      S = (hs[0].size + hs[1].size) / 2;
-      dist = d2(hs[0].P[9], hs[1].P[9]) / S;
-      if (dist < 0.35) two = false;
-    }
-    if (two) {
-      clapBuf.push({ t: now, d: dist, mx: (hs[0].P[9].x + hs[1].P[9].x) / 2, my: (hs[0].P[9].y + hs[1].P[9].y) / 2, S: S });
-      while (clapBuf.length && clapBuf[0].t < now - 0.9) clapBuf.shift();
-      clapLast = now;
-      /* the hands have come together: clearly further apart a moment ago, close now */
+    /* one clap. The palms meet edge-on to the camera and blur while they move, so the tracker rarely sees the
+       clap itself. What it does see is the moment before: two hands apart at about the same height, neither of
+       them pointing with its index finger. A clap is only looked for after that has been seen, so a hand
+       that has just drawn a circle does not start it. After it, any of these counts: the two
+       hands close together, or only one of them left somewhere along the way to where the other one was */
+    if (hs.length >= 2) {
+      const a = hs[0], b = hs[1], S = (a.size + b.size) / 2;
+      const dist = d2(a.P[9], b.P[9]) / S;
+      const ready = dist >= 1.5 && !a.idxOnly && !b.idxOnly && !a.pointDown && !b.pointDown && Math.abs(a.P[9].y - b.P[9].y) < 0.6 * dist * S;
+      clapBuf.push({ t: now, d: dist, ready: ready, ax: a.P[9].x, ay: a.P[9].y, bx: b.P[9].x, by: b.P[9].y, S: S });
+      while (clapBuf.length && clapBuf[0].t < now - 1.0) clapBuf.shift();
+      clapLast = now; clapOne = 0;
       let far = 0;
-      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].d > far) far = clapBuf[j].d;
-      if (dist < 2.0 && far - dist >= 1.5) { clapBuf.length = 0; requestStage(5); return; }
-    } else if (clapBuf.length >= 2 && now - clapLast < 0.25) {
-      /* when the palms meet, the tracker usually loses one hand or both. That counts as the clap only if the
-         two hands were seen closing in on each other quickly just before */
-      const last = clapBuf[clapBuf.length - 1], prev = clapBuf[clapBuf.length - 2];
-      let far = 0;
-      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].t > now - 0.7 && clapBuf[j].d > far) far = clapBuf[j].d;
-      /* closing fast, by a good part of a hand, and not far apart any more when last seen */
-      const speed = (prev.d - last.d) / Math.max(0.03, last.t - prev.t);
-      const hit = last.d <= 4.5 && far - last.d >= 1.5 && speed >= 6;
-      if (hit) { clapBuf.length = 0; requestStage(5); return; }
-    } else if (now - clapLast > 0.4) clapBuf.length = 0;
+      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].ready && clapBuf[j].d > far) far = clapBuf[j].d;
+      if (dist < 1.5 && far > 0) {
+        const pair = a.side !== b.side && a.side !== '' && b.side !== '';
+        if (far - dist >= (pair ? 0.5 : 1.0)) { requestStage(5); return; }
+      }
+    } else if (hs.length === 1 && clapBuf.length >= 1 && now - clapLast < 0.6) {
+      const h = hs[0], lastTwo = clapBuf[clapBuf.length - 1];
+      let far = 0, last = null;
+      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].ready) { last = clapBuf[j]; if (last.d > far) far = last.d; }
+      if (last && now - last.t < 0.8) {
+        /* the two were closing when one of them was lost */
+        if (lastTwo.d <= 4.5 && far - lastTwo.d >= 0.6) { clapBuf.length = 0; requestStage(5); return; }
+        /* how far the hand that is left still is from where the other one was, as a part of the gap there was
+           between them: a hand that simply stayed where it was while the other left the picture scores 1 */
+        const da = Math.hypot(h.P[9].x - last.ax, h.P[9].y - last.ay), db = Math.hypot(h.P[9].x - last.bx, h.P[9].y - last.by);
+        const gap = Math.max(da, db) / (last.d * last.S + 1e-6);
+        if (last.d <= 6.5 && gap < 0.72) { clapBuf.length = 0; requestStage(5); return; }
+        /* often one hand hardly moves and the other comes over to it. Then all that is left to see is that the
+           other hand has gone, and it did not go out through an edge of the picture: it was well inside it.
+           The hand that is left has to be open and upright, three times in a row, so that a hand the tracker
+           drops for a moment does not count */
+        clapOne = h.nExt >= 3 && h.upright ? clapOne + 1 : 0;
+        const gx = (da > db ? last.ax : last.bx) / camAsp, gy = da > db ? last.ay : last.by;
+        if (clapOne >= 3 && last.d <= 6.5 && gx > 0.1 && gx < 0.9 && gy > 0.06 && gy < 0.88) { clapBuf.length = 0; requestStage(5); return; }
+      }
+    } else if (now - clapLast > 0.6) clapBuf.length = 0;
   }
 }
 
 /* the small camera window: the one thing besides the gradient that is painted */
+/* the split view: the whole camera picture, mirrored, with the hands drawn on it, and under it the scene.
+   The tracker needs a moment to find the hands, so its answer always belongs to a picture from a little
+   earlier. Lines from that answer drawn over the newest picture would trail behind the hands. Instead the
+   camera pictures of the last moments are kept, the one the answer belongs to is shown, and between two
+   answers both the picture and the hand positions move on smoothly */
+function drawSplit() {
+  const sh = OUT_H - CAM_H;
+  outX.setTransform(1, 0, 0, 1, 0, 0);
+  outX.drawImage(cv, 0, Math.round(SCENE_Y0 * H), W, sh, 0, CAM_H, OUT_W, sh);
+  if (!camReady || !video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+    outX.fillStyle = '#080b16';
+    outX.fillRect(0, 0, OUT_W, CAM_H);
+    return;
+  }
+  const vw = video.videoWidth, vh = video.videoHeight, ta = OUT_W / CAM_H;
+  let sw = vw, sv = vh;
+  if (vw / vh > ta) sw = vh * ta; else sv = vw / ta;
+  const sx = (vw - sw) / 2, sy = (vh - sv) / 2, nowMs = performance.now();
+  const rx = ringX[ringHead];
+  rx.setTransform(-1, 0, 0, 1, OUT_W, 0);
+  rx.drawImage(video, sx, sy, sw, sv, 0, 0, OUT_W, CAM_H);
+  ringT[ringHead] = nowMs;
+  const newest = ringHead;
+  ringHead = (ringHead + 1) % RING;
+  /* which moment to show: it runs from the picture of the answer before last to that of the last answer */
+  let td = nowMs, A = null, B = null, f = 1;
+  const n = resQ.length;
+  if (hands && n >= 2 && nowMs - resQ[n - 1].a < 400) {
+    A = resQ[n - 2]; B = resQ[n - 1];
+    td = Math.min(B.t, A.t + (nowMs - B.a));
+    f = B.t > A.t ? clamp01((td - A.t) / (B.t - A.t)) : 1;
+  }
+  let best = newest, bt = -1;
+  for (let i = 0; i < RING; i++) if (ringT[i] > bt && ringT[i] <= td + 8) { bt = ringT[i]; best = i; }
+  outX.drawImage(ringC[best], 0, 0);
+  if (!B) return;
+  outX.save();
+  outX.beginPath();
+  outX.rect(0, 0, OUT_W, CAM_H);
+  outX.clip();
+  outX.lineWidth = 3.5;
+  outX.lineCap = 'round';
+  outX.strokeStyle = 'rgba(255,255,255,0.85)';
+  outX.fillStyle = '#ffffff';
+  const px = new Float32Array(21), py = new Float32Array(21);
+  const strokeHand = () => {
+    outX.beginPath();
+    for (let b = 0; b < BONES.length; b++) { outX.moveTo(px[BONES[b][0]], py[BONES[b][0]]); outX.lineTo(px[BONES[b][1]], py[BONES[b][1]]); }
+    outX.stroke();
+    for (let i = 0; i < 21; i++) {
+      const r = i % 4 === 0 && i > 0 ? 9 : 6;
+      outX.beginPath();
+      outX.roundRect(px[i] - r, py[i] - r, 2 * r, 2 * r, r);
+      outX.fill();
+    }
+  };
+  const used = [];
+  for (let k = 0; k < B.hands.length; k++) {
+    const hb = B.hands[k];
+    if (!hb || hb.length < 21) continue;
+    /* the same hand in the answer before, if it was there */
+    let ha = null, bd = 0.3;
+    for (let j = 0; j < A.hands.length; j++) {
+      const c = A.hands[j];
+      if (!c || c.length < 21 || used.indexOf(j) >= 0) continue;
+      const d = Math.hypot(c[9].x - hb[9].x, c[9].y - hb[9].y);
+      if (d < bd) { bd = d; ha = c; used[k] = j; }
+    }
+    if (!ha && f < 0.5) continue;
+    for (let i = 0; i < 21; i++) {
+      const x = ha ? ha[i].x + (hb[i].x - ha[i].x) * f : hb[i].x, y = ha ? ha[i].y + (hb[i].y - ha[i].y) * f : hb[i].y;
+      px[i] = OUT_W - (x * vw - sx) / sw * OUT_W; py[i] = (y * vh - sy) / sv * CAM_H;
+    }
+    strokeHand();
+  }
+  if (f < 0.5) {
+    /* a hand that is gone in the last answer stays for the first half of the way */
+    for (let j = 0; j < A.hands.length; j++) {
+      const c = A.hands[j];
+      if (!c || c.length < 21 || used.indexOf(j) >= 0) continue;
+      for (let i = 0; i < 21; i++) { px[i] = OUT_W - (c[i].x * vw - sx) / sw * OUT_W; py[i] = (c[i].y * vh - sy) / sv * CAM_H; }
+      strokeHand();
+    }
+  }
+  outX.restore();
+}
 
 function drawCamera() {
+  if (splitView) { drawSplit(); return; }
   if (!camReady || !video || video.readyState < 2) return;
   /* while hand tracking answers, the window shows the tracked frames; otherwise the live picture */
   const tracked = performance.now() / 1000 - camShotT < 0.6;
@@ -2476,8 +2587,17 @@ window.addEventListener('keydown', e => {
   else if (k.length === 1 && k >= '1' && k <= '6') requestStage(k.charCodeAt(0) - 48);
   else if (k === 'd' || k === 'D') twistDir = -twistDir;
   else if (k === 't' || k === 'T') doTwist();
+  else if (k === 'l' || k === 'L') setSplit(!splitView);
 });
 cv.addEventListener('click', begin);
+outC.addEventListener('click', begin);
+/* the split view: the camera across the top and the scene under it, drawn at a fixed size */
+function setSplit(on) {
+  splitView = on;
+  document.body.classList.toggle('split', on);
+  resize();
+}
+document.getElementById('bSplit').addEventListener('click', e => { e.currentTarget.blur(); setSplit(!splitView); });
 window.addEventListener('resize', resize);
 
 genTree();
