@@ -1476,8 +1476,8 @@ function deerSDF(px, py) {
   }
   return d;
 }
-const FRONT_KEYS = [[15, 8], [1, 0], [-13, -17], [5, -34]];
-const HIND_KEYS = [[12, 24], [-1, 8], [-15, -5], [-5, 26]];
+const FRONT_KEYS = [[60, 16], [6, 0], [-26, -30], [20, -72]];
+const HIND_KEYS = [[26, 42], [-2, 16], [-38, -22], [-14, 38]];
 /* a smooth closed curve through the four key poses, so a leg never stops between them */
 function crom(a, b, c, d, t) {
   return 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (3 * b - a - 3 * c + d) * t * t * t);
@@ -1491,36 +1491,42 @@ function deerLeg(hx, hy, keys, ph, L1, L2, r0, r1, r2) {
   dCap(hx, hy, kx, ky, r0, r1);
   dCap(kx, ky, kx + L2 * Math.sin(a2), ky - L2 * Math.cos(a2), r1, r2);
 }
-/* a stag walking on the spot, seen from the side and facing right: a level, rounded body, a long upright neck at
-   the front with the head carried high and the muzzle forward, two antlers that open in a V above it, a short
-   tail, and four long slim legs that stay nearly upright and bend at the knee as they step */
+/* a stag bounding on the spot, seen from the side and facing right. The body is long and level with a full rump
+   and a deep chest; the neck rises straight up from the very front of it, so chest and neck make one upright line;
+   the head is carried high with the muzzle forward. The antlers sweep back: the rear beam leans far over the
+   shoulders, the front one stands nearly upright, each with a tine or two. The legs are long: at one moment they
+   are flung wide, front and back, a quarter of a stride later they are gathered straight under the body */
 function buildDeer(ph) {
   nDE = 0; nDC = 0;
   const st = TAU * 2 * ph;
-  /* the head nods a little with each step; the tail flicks */
-  const hx = 0.18 * Math.cos(st + 0.9), hy = 0.22 * Math.sin(st + 0.9);
-  dEll(0, 0, 8.3, 3.3, 0);
-  dEll(4.6, 0.25, 3.7, 3.6, 0.15);
-  dEll(-4.9, 0.15, 3.6, 3.5, -0.1);
-  dCap(5.3, 2.4, 5.8 + hx * 0.6, 10.6 + hy * 0.6, 1.75, 1.3);
-  dEll(6.5 + hx, 12.7 + hy, 2.5, 1.9, -0.1);
-  dCap(7.9 + hx, 12.3 + hy, 11.3 + hx, 11.5 + hy, 1.15, 0.75);
-  dCap(5.1 + hx, 13.9 + hy, 3.5 + hx, 15.0 + hy, 0.6, 0.2);
-  const tl = 0.4 * Math.sin(st + 0.3);
-  dCap(-8.1, 2.2, -9.5, 3.7 + tl, 0.9, 0.4);
-  const ax = hx * 1.2, ay = hy * 1.2;
-  dCap(5.7 + ax, 14.3 + ay, 3.7 + ax, 18.6 + ay, 0.5, 0.42);
-  dCap(3.7 + ax, 18.6 + ay, 2.5 + ax, 23.0 + ay, 0.42, 0.25);
-  dCap(4.7 + ax, 16.5 + ay, 2.1 + ax, 17.7 + ay, 0.36, 0.15);
-  dCap(3.5 + ax, 19.3 + ay, 1.0 + ax, 21.1 + ay, 0.34, 0.15);
-  dCap(7.3 + ax, 14.3 + ay, 8.9 + ax, 18.6 + ay, 0.5, 0.42);
-  dCap(8.9 + ax, 18.6 + ay, 9.7 + ax, 23.0 + ay, 0.42, 0.25);
-  dCap(8.1 + ax, 16.5 + ay, 10.7 + ax, 17.7 + ay, 0.36, 0.15);
-  dCap(9.1 + ax, 19.4 + ay, 11.7 + ax, 21.3 + ay, 0.34, 0.15);
-  deerLeg(5.6, -2.2, FRONT_KEYS, ph, 5.8, 6.2, 0.95, 0.62, 0.45);
-  deerLeg(3.6, -2.4, FRONT_KEYS, ph + 0.5, 5.8, 6.2, 0.9, 0.6, 0.45);
-  deerLeg(-4.6, -2.3, HIND_KEYS, ph + 0.5, 5.8, 6.2, 1.1, 0.64, 0.45);
-  deerLeg(-6.5, -2.1, HIND_KEYS, ph, 5.8, 6.2, 1.05, 0.6, 0.45);
+  /* the head dips and reaches forward as the legs fly apart, and lifts and draws back as they gather */
+  const hx = 0.75 * Math.cos(st - 0.3), hy = -0.8 * Math.cos(st - 0.5);
+  dEll(0, 0, 9.2, 2.85, 0);
+  dEll(-6.3, 0, 3.3, 3.4, 0);
+  dEll(6.6, -0.2, 2.9, 3.2, 0);
+  /* the neck is a cone: broad where it grows out of the back, slim under the head, its front edge upright */
+  dCap(5.5, 1.6, 8.4 + hx * 0.6, 10.5 + hy * 0.6, 3.0, 1.45);
+  dEll(9.0 + hx, 12.3 + hy, 2.7, 1.75, -0.1);
+  dCap(10.6 + hx, 11.6 + hy, 14.0 + hx, 11.2 + hy, 0.8, 0.55);
+  dCap(7.6 + hx, 13.6 + hy, 6.5 + hx, 14.7 + hy, 0.6, 0.3);
+  const tl = 0.5 * Math.sin(st + 0.3);
+  dCap(-9.0, 2.4, -10.4, 4.2 + tl, 0.9, 0.45);
+  const ax = hx * 1.15, ay = hy * 1.15;
+  dCap(7.6 + ax, 14.6 + ay, 7.2 + ax, 17.6 + ay, 0.5, 0.45);
+  dCap(7.2 + ax, 17.6 + ay, 5.6 + ax, 20.4 + ay, 0.45, 0.4);
+  dCap(5.6 + ax, 20.4 + ay, 2.6 + ax, 22.6 + ay, 0.4, 0.3);
+  dCap(2.6 + ax, 22.6 + ay, 1.6 + ax, 24.6 + ay, 0.3, 0.2);
+  dCap(4.6 + ax, 21.2 + ay, 4.6 + ax, 24.4 + ay, 0.32, 0.18);
+  dCap(9.3 + ax, 14.6 + ay, 10.0 + ax, 18.2 + ay, 0.5, 0.45);
+  dCap(10.0 + ax, 18.2 + ay, 9.6 + ax, 21.6 + ay, 0.45, 0.35);
+  dCap(9.6 + ax, 21.6 + ay, 9.6 + ax, 24.6 + ay, 0.35, 0.2);
+  dCap(10.0 + ax, 18.4 + ay, 11.8 + ax, 20.2 + ay, 0.32, 0.18);
+  dCap(9.6 + ax, 21.4 + ay, 8.0 + ax, 23.2 + ay, 0.3, 0.18);
+  /* diagonal pairs move together: a front leg and the hind leg on the other side */
+  deerLeg(7.4, -2.2, FRONT_KEYS, ph, 3.9, 4.3, 0.95, 0.55, 0.38);
+  deerLeg(6.0, -2.4, FRONT_KEYS, ph + 0.5, 3.9, 4.3, 0.9, 0.52, 0.38);
+  deerLeg(-6.2, -2.4, HIND_KEYS, ph, 5.0, 5.8, 1.2, 0.6, 0.38);
+  deerLeg(-7.6, -2.2, HIND_KEYS, ph + 0.5, 5.0, 5.8, 1.15, 0.58, 0.38);
 }
 const DEER_MAX = 8000;
 const deerI = new Int32Array(DEER_MAX), deerD = new Float32Array(DEER_MAX);
@@ -1534,17 +1540,18 @@ function prepDeer() {
   const e = (T - 10.85) / 1.4;
   deerE = e;
   if (e <= 0) return;
-  const s = Math.max(0.05, 1.15 * easeOutBack(e)), mv = easeOutCubic(e);
-  const ph = fract(tReal * 0.8), st = TAU * 2 * ph;
+  const s = Math.max(0.05, 1.0 * easeOutBack(e)), mv = easeOutCubic(e);
+  /* one full stride takes a little under a second */
+  const ph = fract(tReal * 1.045), st = TAU * 2 * ph;
   buildDeer(ph);
-  /* a walk: the body rises and settles a little twice per stride and barely tips */
-  const ox = cxc + 0.5 * mv;
-  const oy = lerp(baseRow - 0.45 * treeH, baseRow - 0.225 * treeH, mv) - 0.3 * Math.sin(st) * AR * s;
+  /* twice per stride the body sinks as the legs fly apart and rises as they gather, and surges a little */
+  const ox = cxc + (0.5 - 0.9 * Math.cos(st)) * mv;
+  const oy = baseRow - 0.225 * treeH + 0.8 * Math.cos(st + 0.5) * AR * s;
   deerOX = ox; deerOY = oy;
-  const rock = 0.018 * Math.sin(st - 0.9);
+  const rock = 0.03 * Math.sin(st - 1.2);
   const pc = Math.cos(rock), ps = Math.sin(rock);
-  const x0 = Math.max(0, Math.floor(ox - 14 * s)), x1 = Math.min(gcols - 1, Math.ceil(ox + 16 * s));
-  const y0 = Math.max(0, Math.floor(oy - 27 * AR * s)), y1 = Math.min(rows - 1, Math.ceil(oy + 18 * AR * s));
+  const x0 = Math.max(0, Math.floor(ox - 17 * s)), x1 = Math.min(gcols - 1, Math.ceil(ox + 18 * s));
+  const y0 = Math.max(0, Math.floor(oy - 28 * AR * s)), y1 = Math.min(rows - 1, Math.ceil(oy + 17 * AR * s));
   const dimK = clamp01(e * 1.5);
   for (let y = y0; y <= y1; y++) {
     const lya = -(y - 0.25 - oy) / (AR * s), lyb = -(y + 0.25 - oy) / (AR * s);
@@ -1552,12 +1559,11 @@ function prepDeer() {
       const lx0 = (x - ox) / s;
       /* two samples per cell, one above the other, so thin legs and antlers do not break up */
       const d = Math.min(deerSDF(lx0 * pc + lya * ps, -lx0 * ps + lya * pc), deerSDF(lx0 * pc + lyb * ps, -lx0 * ps + lyb * pc)) * s;
-      if (d >= 2.6) continue;
+      if (d >= 3.6) continue;
       const idx = y * gcols + x;
-      /* the tree is only a little darker right against the deer, so its outline reads without a heavy shadow */
-      dimA[idx] = lerp(1, lerp(0.58, 1, smooth((d - 0.1) / 2.5)), dimK);
-      /* it does not pop in whole: it gathers out of sparkles */
-      if (d < 0.12 && deerN < DEER_MAX && (e > 0.6 || h2(x + 5, y + 9) < e * 1.8)) { deerI[deerN] = idx; deerD[deerN] = d; deerMask[idx] = 1; deerN++; }
+      /* the tree is darker close around the deer, enough for the white outline to read, and no further */
+      dimA[idx] = lerp(1, lerp(0.4, 1, smooth((d - 0.2) / 3.4)), dimK);
+      if (d < 0.12 && deerN < DEER_MAX) { deerI[deerN] = idx; deerD[deerN] = d; deerMask[idx] = 1; deerN++; }
     }
   }
 }
@@ -1580,14 +1586,6 @@ function drawDeer() {
     }
   }
   if (deerE > 0.5) addHalo(deerOX + 2, deerOY - 4 * AR, 15, 0.05 * clamp01(deerE - 0.5), rgba(236, 244, 255));
-  /* sparkles spiral inward while it forms */
-  if (deerE > 0 && deerE < 1) {
-    const R = 4 + 22 * (1 - deerE) * (1 - deerE);
-    for (let i = 0; i < 16; i++) {
-      const a = i * TAU / 16 + tReal * 5 + deerE * 4, rr = R * (0.7 + 0.3 * h2(i, 31));
-      put(deerOX + rr * Math.cos(a), deerOY - 2 + rr * Math.sin(a) * AR, i % 3 ? c_plus : c_star, rgba(245, 250, 255, 0.5 + 0.5 * deerE), 102);
-    }
-  }
 }
 
 function drawDust(F) {
