@@ -111,7 +111,7 @@ const TR = 0.32 * COLS;
 const FFLOOR = -(0.845 - 0.724) / (0.724 - 0.273);
 
 function resize() {
-  dpr = Math.min(2, window.devicePixelRatio || 1);
+  dpr = Math.min(2, window.devicePixelRatio || 1, Math.max(0.8, Math.sqrt(2.6e6 / Math.max(1, window.innerWidth * window.innerHeight))));
   W = Math.max(2, Math.floor(window.innerWidth * dpr));
   H = Math.max(2, Math.floor(window.innerHeight * dpr));
   cv.width = W; cv.height = H;
@@ -206,7 +206,7 @@ let tReal = 0, T = 0, prevT = 0, Tlimit = 0, stage = 0, treeT = 0;
 let lastMs = 0;
 let pending = null;
 let ignoreUntil = 0;
-let quality = 4, emaDt = 5, slowT = 0;
+let quality = 4, emaDt = 5, slowT = 0, emaFr = 17, lite = false;
 const STAGE_END = [0, 1.5, 5.6, 6.25, 9.25, 10.8, Infinity];
 const twists = [];
 let twistDir = 1, twistCool = 0;
@@ -467,7 +467,7 @@ function genTree() {
 const NSNOW = 1200;
 const snX = new Float32Array(NSNOW), snY = new Float32Array(NSNOW), snV = new Float32Array(NSNOW);
 const snW = new Float32Array(NSNOW), snP = new Float32Array(NSNOW), snC = new Uint32Array(NSNOW);
-const EXN = 2600;
+const EXN = 3200;
 const exX = new Float32Array(EXN), exY = new Float32Array(EXN), exT = new Float32Array(EXN).fill(-1);
 const exV = new Float32Array(EXN), exA = new Float32Array(EXN), exG = new Uint8Array(EXN);
 let exHead = 0, snowAcc = 0;
@@ -582,7 +582,7 @@ function drawSnow() {
   }
   /* the snow a hand has sprinkled: many small flakes, some bright and near, some faint and far, that fall
      straight down over the tree and thin out before they reach the ground */
-  const fadeA = rows * 0.5, fadeB = rows * 0.74;
+  const fadeA = rows * 0.6, fadeB = rows * 0.86;
   for (let i = 0; i < EXN; i++) {
     if (exT[i] < 0) continue;
     const age = tReal - exT[i];
@@ -606,13 +606,13 @@ function emitSnow(dt) {
     const i = exHead; exHead = (exHead + 1) % EXN;
     /* born across a band about half the stage wide above the tree, nudged toward the hand, and at any height
        in the sky above the star, so the curtain is there at once */
-    exX[i] = extra + (0.5 + (snowU - 0.5) * 0.4) * COLS + (Math.random() + Math.random() - 1) * 32;
-    exY[i] = rows * (0.06 + 0.2 * Math.random());
+    exX[i] = extra + (0.5 + (snowU - 0.5) * 0.4) * COLS + (Math.random() + Math.random() - 1) * 40;
+    exY[i] = rows * (0.02 + 0.26 * Math.random());
     exT[i] = tReal;
     const d = Math.random();
-    exV[i] = 0.04 + 0.075 * d;
-    exA[i] = 0.3 + 0.7 * d;
-    exG[i] = d < 0.4 ? c_dot : d < 0.86 ? c_plus : c_star;
+    exV[i] = 0.05 + 0.09 * d;
+    exA[i] = 0.55 + 0.45 * d;
+    exG[i] = d < 0.2 ? c_dot : d < 0.7 ? c_plus : c_star;
   }
 }
 
@@ -1762,10 +1762,12 @@ function render() {
   ctx.globalCompositeOperation = 'screen';
   ctx.globalAlpha = 0.15;
   ctx.drawImage(bl1, gridX0, 0, gw, gh);
-  ctx.globalAlpha = 0.13;
-  ctx.drawImage(bl2, gridX0, 0, gw, gh);
-  ctx.globalAlpha = 0.11;
-  ctx.drawImage(bl3, gridX0, 0, gw, gh);
+  if (!lite) {
+    ctx.globalAlpha = 0.13;
+    ctx.drawImage(bl2, gridX0, 0, gw, gh);
+    ctx.globalAlpha = 0.11;
+    ctx.drawImage(bl3, gridX0, 0, gw, gh);
+  }
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
   drawCamera();
@@ -1774,6 +1776,7 @@ function render() {
 function frame(ms) {
   requestAnimationFrame(frame);
   const dt = document.hidden ? 0 : Math.min(0.25, Math.max(0, (ms - lastMs) / 1000));
+  if (dt > 0) emaFr = emaFr * 0.96 + dt * 40;
   lastMs = ms;
   if (!paused) {
     tReal += dt;
@@ -1800,9 +1803,14 @@ function frame(ms) {
   /* thin the point cloud only if projecting it is what costs the frame rate */
   if (state === 'film' && T > 3 && !paused) {
     emaDt = emaDt * 0.95 + cost * 0.05;
-    if (emaDt > 14) {
+    /* if frames come slowly, whatever the reason, the page first drops the two widest glow passes and then
+       thins the tree, so the motion stays fluid */
+    if (emaDt > 14 || emaFr > 25) {
       slowT += dt;
-      if (slowT > 1.5 && quality > 2) { quality--; slowT = 0; emaDt = 6; }
+      if (slowT > 1.5) {
+        if (!lite) lite = true; else if (quality > 2) quality--;
+        slowT = 0; emaDt = 6; emaFr = 17;
+      }
     } else slowT = 0;
   }
 }
@@ -1849,6 +1857,8 @@ function begin() {
 let video = null, camReady = false, hands = null, handBusy = false, lastSend = 0, handFail = 0, handOK = false;
 let camAsp = 16 / 9;
 const small = document.createElement('canvas'), smx = small.getContext('2d');
+const camShot = document.createElement('canvas'), camShotX = camShot.getContext('2d');
+let camShotT = -9;
 small.width = 640; small.height = 360;
 let handDraw = [], handDrawT = -9;
 const tracks = [];
@@ -1874,7 +1884,7 @@ async function startCamera() {
     camReady = true;
     if (typeof Hands === 'undefined') throw new Error('hand tracking unavailable');
     hands = new Hands({ locateFile: f => 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/' + f });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     hands.onResults(onResults);
     if (mode === 'pending') mode = 'hands';
   } catch (err) {
@@ -1884,11 +1894,12 @@ async function startCamera() {
 }
 
 function pumpHands(ms) {
-  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < 55) return;
+  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < 66) return;
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return;
   camAsp = vw / vh;
-  const sh = Math.max(2, Math.round(640 / camAsp));
+  if (small.width !== 512) small.width = 512;
+  const sh = Math.max(2, Math.round(512 / camAsp));
   if (small.height !== sh) small.height = sh;
   smx.drawImage(video, 0, 0, small.width, small.height);
   handBusy = true; lastSend = ms;
@@ -2047,6 +2058,12 @@ function onResults(res) {
   const now = performance.now() / 1000;
   const raw = (res && res.multiHandLandmarks) || [];
   handDraw = raw; handDrawT = now;
+  /* keep the analysed picture, so the points and lines sit exactly on the hand they belong to */
+  if (small.width > 2 && small.height > 2) {
+    if (camShot.width !== small.width || camShot.height !== small.height) { camShot.width = small.width; camShot.height = small.height; }
+    camShotX.drawImage(small, 0, 0);
+    camShotT = now;
+  }
   const hs = [];
   const sides = (res && res.multiHandedness) || [];
   for (let i = 0; i < raw.length; i++) {
@@ -2070,7 +2087,7 @@ function onResults(res) {
     if (!h.snow) tr.snowT0 = null;
     else {
       if (tr.snowT0 === null) tr.snowT0 = now;
-      if (now - tr.snowT0 >= 0.3) { snowU = h.u; snowVv = h.v; snowRate = clamp((tr.rub - 0.5) * 34, 0, 130); snowSeen = now; }
+      if (now - tr.snowT0 >= 0.3) { snowU = h.u; snowVv = h.v; snowRate = clamp(90 + tr.rub * 40, 90, 300); snowSeen = now; }
     }
   }
 
@@ -2142,30 +2159,27 @@ function onResults(res) {
     if (hs.length >= 2) {
       const a = hs[0], b = hs[1], S = (a.size + b.size) / 2;
       const dist = d2(a.P[9], b.P[9]) / S;
-      const open = a.nExt >= 3 && b.nExt >= 3;
-      clapBuf.push({ t: now, d: dist, open: open, mx: (a.P[9].x + b.P[9].x) / 2, my: (a.P[9].y + b.P[9].y) / 2, S: S });
+      clapBuf.push({ t: now, d: dist, mx: (a.P[9].x + b.P[9].x) / 2, my: (a.P[9].y + b.P[9].y) / 2, S: S });
       while (clapBuf.length && clapBuf[0].t < now - 0.9) clapBuf.shift();
       clapLast = now;
+      /* the hands have come together: they were clearly further apart within the last moment and are close now.
+         Whether the fingers look open is not asked: seen edge-on at the moment of the clap they rarely do */
       let far = 0;
-      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].open && clapBuf[j].d > far) far = clapBuf[j].d;
-      if (open && dist < 1.5) {
-        const pair = a.side !== b.side && a.side !== '' && b.side !== '';
-        /* palms together: seen twice within a moment, or once right after the hands came together */
-        if (pair && (now - clapTogether < 0.6 || far - dist >= 0.5)) { requestStage(5); return; }
-        if (far - dist >= 1.2) { requestStage(5); return; }
-        if (pair) clapTogether = now;
+      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].d > far) far = clapBuf[j].d;
+      if (dist < 1.7 && far - dist >= 0.7) { clapBuf.length = 0; requestStage(5); return; }
+    } else if (clapBuf.length >= 1 && now - clapLast < 0.5) {
+      /* when the palms meet, the tracker usually loses one hand or both for a moment. If the two hands were
+         closing, or were already near each other, or the one that is left sits between where they were,
+         that is the clap */
+      const last = clapBuf[clapBuf.length - 1];
+      let far = 0;
+      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].d > far) far = clapBuf[j].d;
+      let hit = last.d < 2.4 || (last.d <= 5.5 && far - last.d >= 0.4);
+      if (!hit && hs.length === 1 && last.d <= 7) {
+        const mid = Math.hypot(hs[0].P[9].x - last.mx, hs[0].P[9].y - last.my) / (last.d * last.S + 1e-6);
+        hit = mid < 0.42;
       }
-    } else if (hs.length === 1 && clapBuf.length >= 1 && now - clapLast < 0.6) {
-      /* at the moment the palms meet the tracker often reports the hands as closed or loses one of them,
-         so the judgement goes back to the last moment both hands were clearly open */
-      const h = hs[0];
-      let far = 0, last = null;
-      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].open) { last = clapBuf[j]; if (last.d > far) far = last.d; }
-      if (last && now - last.t < 0.6) {
-        /* the hand that is left has moved into the middle between the two, or the two were closing fast */
-        const mid = Math.hypot(h.P[9].x - last.mx, h.P[9].y - last.my) / (last.d * last.S + 1e-6);
-        if ((last.d <= 4.5 && far - last.d >= 0.6) || (last.d >= 1.5 && last.d <= 6.5 && mid < 0.35)) { clapBuf.length = 0; requestStage(5); return; }
-      }
+      if (hit) { clapBuf.length = 0; requestStage(5); return; }
     } else if (now - clapLast > 0.6) clapBuf.length = 0;
   }
 }
@@ -2174,7 +2188,10 @@ function onResults(res) {
 
 function drawCamera() {
   if (!camReady || !video || video.readyState < 2) return;
-  const vw = video.videoWidth, vh = video.videoHeight;
+  /* while hand tracking answers, the window shows the tracked frames; otherwise the live picture */
+  const tracked = performance.now() / 1000 - camShotT < 0.6;
+  const src = tracked ? camShot : video;
+  const vw = tracked ? camShot.width : video.videoWidth, vh = tracked ? camShot.height : video.videoHeight;
   if (!vw || !vh) return;
   const s = 0.26 * PW, m = 0.03 * PW, x = stageX + PW - s - m, y = m;
   const side = Math.min(vw, vh), sx = (vw - side) / 2, sy = (vh - side) / 2;
@@ -2184,9 +2201,9 @@ function drawCamera() {
   ctx.clip();
   ctx.translate(x + s, y);
   ctx.scale(-1, 1);
-  ctx.drawImage(video, sx, sy, side, side, 0, 0, s, s);
+  ctx.drawImage(src, sx, sy, side, side, 0, 0, s, s);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  if (performance.now() / 1000 - handDrawT < 0.35) {
+  if (tracked) {
     ctx.lineWidth = Math.max(1, s * 0.007);
     ctx.lineCap = 'round';
     ctx.strokeStyle = 'rgba(235,233,221,0.55)';
