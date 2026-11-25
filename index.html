@@ -869,7 +869,7 @@ function drawBurst() {
     const x = cxc + r * Math.sin(buA[i]), z = r * Math.cos(buA[i]);
     const y = floorRow + z * ftilt - hgt * AR;
     const p = tau / life;
-    put(x, y, p < 0.4 ? c_star : p < 0.75 ? c_plus : c_dot, hsl(218, 0.22, 0.96 - 0.14 * p, 1 - 0.5 * p * p), z + 2);
+    put(x, y, p < 0.4 ? c_star : p < 0.75 ? c_plus : c_dot, hsl(345, 0.45, 0.9 - 0.1 * p - 0.06 * (i & 1), 1 - 0.5 * p * p), z + 2);
   }
 }
 
