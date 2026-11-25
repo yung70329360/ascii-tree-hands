@@ -599,7 +599,7 @@ function drawSnow() {
 }
 function emitSnow(dt) {
   const now = performance.now() / 1000;
-  if (now - snowSeen > 1.2 || snowRate <= 0) { snowAcc = 0; return; }
+  if (now - snowSeen > 0.6 || snowRate <= 0) { snowAcc = 0; return; }
   snowAcc += snowRate * dt;
   while (snowAcc >= 1) {
     snowAcc -= 1;
@@ -1894,7 +1894,7 @@ async function startCamera() {
 }
 
 function pumpHands(ms) {
-  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < 66) return;
+  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < 55) return;
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return;
   camAsp = vw / vh;
@@ -2075,7 +2075,9 @@ function onResults(res) {
   assignTracks(hs, now);
   const vis = hs.filter(h => h.inside);
 
-  /* snow: rubbing thumb against fingertips, at any time */
+  /* snow: rubbing thumb against fingertips. Not while a circle is being drawn with a finger pointing up or
+     down: a circling finger can pass through the same hand shape */
+  const circling = mode === 'hands' && (stage === 1 || stage === 3) && now - lastPointT < 1.0;
   for (let i = 0; i < vis.length; i++) {
     const h = vis[i], tr = h.tr;
     if (tr.tfPrev !== null && now > tr.tfT) {
@@ -2084,10 +2086,13 @@ function onResults(res) {
     }
     tr.tfPrev = h.tf; tr.tfT = now;
     /* the sprinkling pose has to be held for a moment, so a hand that only passes through it does not snow */
-    if (!h.snow) tr.snowT0 = null;
+    if (!h.snow || circling || tr.path.length > 0) tr.snowT0 = null;
     else {
       if (tr.snowT0 === null) tr.snowT0 = now;
-      if (now - tr.snowT0 >= 0.3) { snowU = h.u; snowVv = h.v; snowRate = clamp(90 + tr.rub * 40, 90, 300); snowSeen = now; }
+      /* the pose alone is not enough: the fingers have to be rubbing */
+      /* while the film waits for the gathered-fingers gesture, which looks the same for a moment, the pose
+         has to be held clearly longer */
+      if (now - tr.snowT0 >= (mode === 'hands' && stage === 2 ? 0.9 : 0.3) && tr.rub > 0.5) { snowU = h.u; snowVv = h.v; snowRate = clamp(90 + (tr.rub - 0.5) * 70, 90, 300); snowSeen = now; }
     }
   }
 
