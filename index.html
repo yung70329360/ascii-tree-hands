@@ -14,9 +14,16 @@ body.split #out { display: block; }
   border: 1.5px solid rgba(255, 255, 255, 0.6); background: rgba(8, 12, 26, 0.6); transition: opacity 0.2s; }
 .tool:hover { opacity: 1; }
 #bSplit { left: 14px; }
+#bRec { left: 60px; }
 #bSplit::before, #bSplit::after { content: ''; position: absolute; left: 10px; width: 14px; border: 1.5px solid #fff; border-radius: 2px; }
 #bSplit::before { top: 8px; height: 4px; }
 #bSplit::after { top: 17px; height: 8px; }
+#bRec::before { content: ''; position: absolute; left: 9px; top: 9px; width: 15px; height: 15px; border-radius: 50%; background: #ff4a4a; }
+body.arm #bRec { opacity: 1; border-color: #ffb84a; }
+body.arm #bRec::before { background: #ffb84a; animation: blink 0.4s steps(2, start) infinite; }
+body.rec #bRec { opacity: 1; border-color: #ff4a4a; }
+body.rec #bRec::before { border-radius: 2px; left: 11px; top: 11px; width: 11px; height: 11px; animation: blink 1s steps(2, start) infinite; }
+@keyframes blink { to { visibility: hidden; } }
 body.split { background: #04060f; }
 </style>
 </head>
@@ -24,6 +31,7 @@ body.split { background: #04060f; }
 <canvas id="c"></canvas>
 <canvas id="out"></canvas>
 <button id="bSplit" class="tool" title="上下分割畫面：上方鏡頭，下方聖誕樹（鍵盤 L）"></button>
+<button id="bRec" class="tool" title="開始 / 停止錄影（鍵盤 V）"></button>
 <script>
 'use strict';
 
@@ -2362,7 +2370,7 @@ function drawCamera() {
 }
 
 /* ============================== sound ============================== */
-let actx = null, bus = null, noiseBuf = null;
+let actx = null, bus = null, noiseBuf = null, masterOut = null;
 let lastStep = -1, lastGrain = -1;
 function initAudio() {
   if (actx) return;
@@ -2387,6 +2395,7 @@ function initAudio() {
     bus.connect(dry); dry.connect(comp);
     bus.connect(conv); conv.connect(wet); wet.connect(comp);
     comp.connect(master); master.connect(actx.destination);
+    masterOut = master;
     const nl = Math.floor(actx.sampleRate * 2);
     noiseBuf = actx.createBuffer(1, nl, actx.sampleRate);
     const nd = noiseBuf.getChannelData(0);
@@ -2578,6 +2587,8 @@ function runCues() {
 /* ============================== input and start ============================== */
 window.addEventListener('keydown', e => {
   const k = e.key;
+  if (k === 'l' || k === 'L') { setSplit(!splitView); return; }
+  if (k === 'v' || k === 'V') { if (recorder || recArm) stopRec(); else startRec(); return; }
   if (state === 'start') {
     if (k === 'Enter' || k === ' ') { e.preventDefault(); begin(); }
     return;
@@ -2587,17 +2598,95 @@ window.addEventListener('keydown', e => {
   else if (k.length === 1 && k >= '1' && k <= '6') requestStage(k.charCodeAt(0) - 48);
   else if (k === 'd' || k === 'D') twistDir = -twistDir;
   else if (k === 't' || k === 'T') doTwist();
-  else if (k === 'l' || k === 'L') setSplit(!splitView);
 });
 cv.addEventListener('click', begin);
 outC.addEventListener('click', begin);
-/* the split view: the camera across the top and the scene under it, drawn at a fixed size */
+/* ---- split view and recording ---- */
+let recorder = null, recChunks = [], recAudio = null, recArm = 0, recWarm = null;
 function setSplit(on) {
+  if ((recorder || recArm) && !on) return;
   splitView = on;
   document.body.classList.toggle('split', on);
   resize();
 }
+function dropWarm() {
+  if (!recWarm) return;
+  const w = recWarm;
+  recWarm = null;
+  w.ondataavailable = null;
+  try { if (w.state !== 'inactive') w.stop(); } catch (err) { /* it had not started */ }
+}
+/* switching to the split view and starting the video encoder both make the picture stumble for a moment.
+   So the button first gets everything ready, with a throw-away recording running to wake the encoder up,
+   and only about a second later the real recording starts, together with the film */
+function startRec() {
+  if (recorder || recArm || typeof MediaRecorder === 'undefined' || !outC.captureStream) return;
+  setSplit(true);
+  if (state === 'start') begin();
+  else { initAudio(); if (actx && !paused) actx.resume(); }
+  const stream = outC.captureStream(30);
+  if (actx && masterOut) {
+    if (!recAudio) { recAudio = actx.createMediaStreamDestination(); masterOut.connect(recAudio); }
+    const tracks = recAudio.stream.getAudioTracks();
+    for (let i = 0; i < tracks.length; i++) stream.addTrack(tracks[i]);
+  }
+  const kinds = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+  let kind = '';
+  for (let i = 0; i < kinds.length; i++) if (MediaRecorder.isTypeSupported(kinds[i])) { kind = kinds[i]; break; }
+  const opts = kind ? { mimeType: kind, videoBitsPerSecond: 12000000 } : { videoBitsPerSecond: 12000000 };
+  try { recWarm = new MediaRecorder(stream, opts); recWarm.start(); } catch (err) { recWarm = null; }
+  document.body.classList.add('arm');
+  recArm = setTimeout(() => { recArm = 0; beginRec(stream, kind, opts); }, 1200);
+}
+function beginRec(stream, kind, opts) {
+  document.body.classList.remove('arm');
+  try {
+    recorder = new MediaRecorder(stream, opts);
+  } catch (err) {
+    recorder = null;
+    dropWarm();
+    return;
+  }
+  recChunks = [];
+  const rec = recorder;
+  rec.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+  rec.onstop = () => {
+    const type = rec.mimeType || kind || 'video/webm';
+    const blob = new Blob(recChunks, { type: type });
+    const d = new Date(), p2 = n => String(n).padStart(2, '0');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ascii-tree-' + d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate()) + '-' + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds()) +
+      (type.indexOf('mp4') >= 0 ? '.mp4' : '.webm');
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 20000);
+    /* the picture is no longer being captured once the recording is over */
+    const vt = stream.getVideoTracks();
+    for (let i = 0; i < vt.length; i++) vt[i].stop();
+    recChunks = [];
+    recorder = null;
+    document.body.classList.remove('rec');
+  };
+  rec.start(1000);
+  dropWarm();
+  /* the recording starts with the empty scene, so the film is taken back to its beginning */
+  resetFilm();
+  document.body.classList.add('rec');
+}
+function stopRec() {
+  if (recArm) {
+    clearTimeout(recArm);
+    recArm = 0;
+    dropWarm();
+    document.body.classList.remove('arm');
+    return;
+  }
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+}
 document.getElementById('bSplit').addEventListener('click', e => { e.currentTarget.blur(); setSplit(!splitView); });
+document.getElementById('bRec').addEventListener('click', e => { e.currentTarget.blur(); if (recorder || recArm) stopRec(); else startRec(); });
 window.addEventListener('resize', resize);
 
 genTree();
