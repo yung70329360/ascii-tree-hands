@@ -115,6 +115,7 @@ const bgc = document.createElement('canvas'), bgx = bgc.getContext('2d');
 const bl1 = document.createElement('canvas'), bl1x = bl1.getContext('2d');
 const bl2 = document.createElement('canvas'), bl2x = bl2.getContext('2d');
 const bl3 = document.createElement('canvas'), bl3x = bl3.getContext('2d');
+const glw = document.createElement('canvas'), glx = glw.getContext('2d');
 const tintC = document.createElement('canvas'), tintX = tintC.getContext('2d');
 /* the split view, which is also what gets recorded: the camera across the top, the scene underneath */
 const outC = document.getElementById('out'), outX = outC.getContext('2d');
@@ -174,6 +175,7 @@ function resize() {
   bl1.width = gcols; bl1.height = rows;
   bl2.width = Math.max(1, gcols >> 1); bl2.height = Math.max(1, rows >> 1);
   bl3.width = Math.max(1, gcols >> 2); bl3.height = Math.max(1, rows >> 2);
+  glw.width = gcols * 2; glw.height = rows * 2;
   glowImg = bl1x.createImageData(gcols, rows);
   glowPx = new Uint32Array(glowImg.data.buffer);
   const gr = bgx.createLinearGradient(0, 0, 0, H);
@@ -237,7 +239,7 @@ let state = 'start';
 let mode = 'idle';
 let paused = false;
 let tReal = 0, T = 0, prevT = 0, Tlimit = 0, stage = 0, treeT = 0;
-let lastMs = 0;
+let lastMs = 0, nextDue = 0, skipped = false;
 let pending = null;
 let ignoreUntil = 0;
 let quality = 4, emaDt = 5, slowT = 0;
@@ -1630,7 +1632,7 @@ function render() {
   rb.length = gc;
   for (let y = 0; y < rows; y++) {
     const py = (y + 0.5) * CH, row = y * gc;
-    let last = -1;
+    let first = -1, last = -1;
     for (let x = 0; x < gc; x++) {
       const i = row + x, ch = chA[i];
       if (ch === 0) { px[i] = 0; gp[i] = 0; if (byRow) rb[x] = ' '; continue; }
@@ -1643,9 +1645,15 @@ function render() {
       if (g2 < 0) g2 = 0;
       if (b2 < 0) b2 = 0;
       gp[i] = r2 + g2 + b2 > 0 ? ((c & 0xff000000) | r2 | (g2 << 8) | (b2 << 16)) >>> 0 : 0;
-      if (byRow) { rb[x] = CHS[ch]; last = x; } else lctx.fillText(CHS[ch], gridX0 + (x + 0.5) * CW, py);
+      if (byRow) {
+        /* a long empty stretch ends the piece of text, and the next piece starts at this cell: the wide empty
+           sky is then not drawn as thousands of spaces */
+        if (first < 0) first = x;
+        else if (x - last > 12) { lctx.fillText(rb.slice(first, last + 1).join(''), rowX + first * CW, py); first = x; }
+        rb[x] = CHS[ch]; last = x;
+      } else lctx.fillText(CHS[ch], gridX0 + (x + 0.5) * CW, py);
     }
-    if (byRow && last >= 0) lctx.fillText(rb.slice(0, last + 1).join(''), rowX, py);
+    if (byRow && first >= 0) lctx.fillText(rb.slice(first, last + 1).join(''), rowX + first * CW, py);
   }
   tintX.putImageData(tintImg, 0, 0);
   lctx.globalCompositeOperation = 'source-in';
@@ -1656,33 +1664,53 @@ function render() {
   ctx.globalAlpha = 1;
   ctx.drawImage(bgc, 0, 0);
   ctx.drawImage(lay, 0, 0);
-  /* glow: the bright cells, one pixel each, are halved twice and all three sizes are stretched back over the
-     frame with 'screen'. Stretching such small images is what makes the glow soft */
+  /* glow: the bright cells, one pixel each, are halved twice. The three sizes are added up in one small picture,
+     twice the size of the grid, and that picture is stretched over the frame with 'screen', once. Stretching such
+     small images is what makes the glow soft; doing it once for the whole frame is what keeps it cheap */
   bl1x.putImageData(glowImg, 0, 0);
   bl2x.clearRect(0, 0, bl2.width, bl2.height);
   bl2x.drawImage(bl1, 0, 0, bl2.width, bl2.height);
   bl3x.clearRect(0, 0, bl3.width, bl3.height);
   bl3x.drawImage(bl2, 0, 0, bl3.width, bl3.height);
-  const gw = gc * CW, gh = rows * CH;
+  const gw = gc * CW, gh = rows * CH, sw = glw.width, sh = glw.height;
+  glx.globalCompositeOperation = 'source-over';
+  glx.globalAlpha = 1;
+  glx.clearRect(0, 0, sw, sh);
+  glx.globalCompositeOperation = 'lighter';
+  glx.imageSmoothingEnabled = true;
+  glx.imageSmoothingQuality = 'high';
+  glx.globalAlpha = 0.15;
+  glx.drawImage(bl1, 0, 0, sw, sh);
+  glx.globalAlpha = 0.13;
+  glx.drawImage(bl2, 0, 0, sw, sh);
+  glx.globalAlpha = 0.11;
+  glx.drawImage(bl3, 0, 0, sw, sh);
   ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
+  ctx.imageSmoothingQuality = 'low';
   ctx.globalCompositeOperation = 'screen';
-  ctx.globalAlpha = 0.15;
-  ctx.drawImage(bl1, gridX0, 0, gw, gh);
-  ctx.globalAlpha = 0.13;
-  ctx.drawImage(bl2, gridX0, 0, gw, gh);
-  ctx.globalAlpha = 0.11;
-  ctx.drawImage(bl3, gridX0, 0, gw, gh);
-  ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
+  ctx.drawImage(glw, gridX0, 0, gw, gh);
+  ctx.globalCompositeOperation = 'source-over';
   drawCamera();
 }
 
 function frame(ms) {
   requestAnimationFrame(frame);
-  /* the split view is what gets recorded: it is drawn at an even 30 frames a second, which keeps the motion in
-     the recording regular and leaves time for the hand tracker and the video encoder */
-  if (splitView && ms - lastMs < 30) return;
+  /* the tracker in its worker is fed on every tick, so it gets the next picture as soon as it is free */
+  if (handWorker && !paused) pumpHands(ms);
+  /* with the hand tracker at work, and in the split view that gets recorded, the scene is drawn at an even 30
+     frames a second: the motion stays regular, and the graphics card has time left for the tracker and for the
+     video encoder. A frame is due every thirtieth of a second, counted on from the one before and not from when
+     that one happened to be drawn, and it is drawn on the screen tick nearest to its moment */
+  if (splitView || hands) {
+    if (ms < nextDue - 4) return;
+    nextDue = ms - nextDue > 100 ? ms + 1000 / 30 : nextDue + 1000 / 30;
+    /* the drawing and the tracker share the graphics card. On a card that cannot keep up with both, the tracker
+       is the one that falls behind, and gestures get missed. So when the tracker has been at one picture for
+       long, one frame is left out to let it finish; never two in a row */
+    if (handWorker && handBusy && !skipped && performance.now() - workerSentAt > 90) { skipped = true; return; }
+    skipped = false;
+  }
   const dt = document.hidden ? 0 : Math.min(0.25, Math.max(0, (ms - lastMs) / 1000));
   lastMs = ms;
   if (!paused) {
@@ -1701,7 +1729,7 @@ function frame(ms) {
       for (let i = 1; i < 6; i++) if (prevT <= STAGE_END[i] && T > STAGE_END[i]) stageFlashT = tReal;
       runCues();
     }
-    pumpHands(ms);
+    if (!handWorker) pumpHands(ms);
   }
   const c0 = performance.now();
   draw();
@@ -1761,6 +1789,8 @@ function begin() {
 
 /* ============================== hands ============================== */
 let video = null, camReady = false, hands = null, handBusy = false, lastSend = 0, handFail = 0, handOK = false;
+let handWorker = null, workerSentAt = 0;
+const HANDS_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/';
 let camAsp = 16 / 9;
 const small = document.createElement('canvas'), smx = small.getContext('2d');
 small.width = 640; small.height = 360;
@@ -1786,11 +1816,109 @@ async function startCamera() {
     video.srcObject = stream;
     await video.play();
     camReady = true;
-    if (typeof Hands === 'undefined') throw new Error('hand tracking unavailable');
-    hands = new Hands({ locateFile: f => 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/' + f });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-    hands.onResults(onResults);
+    if (!startWorker()) startMainTracker();
     if (mode === 'pending') mode = 'hands';
+  } catch (err) {
+    hands = null;
+    setAuto();
+  }
+}
+/* the tracker on the page's own thread: the way it is used when no worker can be had */
+function startMainTracker() {
+  if (typeof Hands === 'undefined') throw new Error('hand tracking unavailable');
+  hands = new Hands({ locateFile: f => HANDS_BASE + f });
+  hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+  hands.onResults(onResults);
+}
+/* Finding the hands in a picture takes the tracker tens of milliseconds, and on the page's own thread nothing
+   can be drawn meanwhile: the scene would stand still several times a second. So the tracker is given a thread
+   of its own, a worker. This function is that worker's whole program; it is turned into text and started from
+   there, so it may use nothing from the rest of this script */
+function trackerMain() {
+  /* the tracker's script expects to be on a page. It is handed the few things of a page that it asks for:
+     a way to load its other scripts, and a canvas for the graphics card */
+  self.window = self;
+  self.document = {
+    createElement: function (tag) {
+      if (tag === 'canvas') return new OffscreenCanvas(1, 1);
+      return { setAttribute: function (k, v) { this[k] = v; }, addEventListener: function (k, f) { this['on' + k] = f; } };
+    },
+    body: {
+      appendChild: function (el) {
+        try { importScripts(el.src); if (el.onload) el.onload(); } catch (err) { if (el.onerror) el.onerror(); }
+      }
+    },
+    addEventListener: function () {},
+    getElementById: function () { return null; },
+    querySelector: function () { return null; }
+  };
+  let tracker = null, stamp = 0;
+  self.onmessage = function (e) {
+    const m = e.data;
+    if (m.base) {
+      try {
+        importScripts(m.base + 'hands.js');
+        tracker = new Hands({ locateFile: function (f) { return m.base + f; } });
+        tracker.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        tracker.onResults(function (res) {
+          const sides = (res.multiHandedness || []).map(function (h) { return { label: h.label, score: h.score }; });
+          self.postMessage({ stamp: stamp, lm: res.multiHandLandmarks || [], sides: sides });
+        });
+        self.postMessage({ ready: true });
+      } catch (err) {
+        self.postMessage({ broken: true });
+      }
+      return;
+    }
+    if (!m.img) return;
+    if (!tracker) { m.img.close(); return; }
+    stamp = m.stamp;
+    tracker.send({ image: m.img }).then(function () {
+      m.img.close();
+      self.postMessage({ done: true });
+    }, function () {
+      m.img.close();
+      self.postMessage({ failed: true });
+    });
+  };
+}
+function startWorker() {
+  if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return false;
+  let w = null;
+  try {
+    w = new Worker(URL.createObjectURL(new Blob(['(' + trackerMain.toString() + ')();'], { type: 'text/javascript' })));
+  } catch (err) {
+    return false;
+  }
+  w.onmessage = e => {
+    if (handWorker !== w) return;
+    const m = e.data;
+    if (m.lm) {
+      /* the answer says which picture it belongs to */
+      sendMs = m.stamp;
+      onResults({ multiHandLandmarks: m.lm, multiHandedness: m.sides });
+    } else if (m.done) handBusy = false;
+    else if (m.failed) {
+      handBusy = false; handFail++;
+      if (handFail > 3 && !handOK) workerFailed();
+    } else if (m.broken) workerFailed();
+  };
+  w.onerror = () => { if (handWorker === w) workerFailed(); };
+  handWorker = w;
+  /* until the worker has answered, 'hands' only says that a tracker is on its way */
+  hands = { worker: true };
+  handBusy = false; workerSentAt = 0;
+  w.postMessage({ base: HANDS_BASE });
+  return true;
+}
+/* the worker could not do it: the tracker moves to the page's own thread, as before */
+function workerFailed() {
+  const w = handWorker;
+  handWorker = null;
+  if (w) { try { w.terminate(); } catch (err) { /* it was gone already */ } }
+  handBusy = false; handFail = 0;
+  try {
+    startMainTracker();
   } catch (err) {
     hands = null;
     setAuto();
@@ -1798,12 +1926,31 @@ async function startCamera() {
 }
 
 function pumpHands(ms) {
-  /* the tracker and the drawing share one thread and one graphics card. In the split view, where the picture
-     is also being encoded as video, the tracker is asked a little less often so the frames stay regular;
-     except while the clap is awaited, which is over in a moment and needs every look it can get */
-  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < (splitView && stage !== 4 ? 75 : 55)) return;
+  /* without a worker, the tracker and the drawing share one thread and one graphics card. In the split view,
+     where the picture is also being encoded as video, the tracker is then asked a little less often so the
+     frames stay regular; except while the clap is awaited, which is over in a moment and needs every look it
+     can get */
+  if (!hands || !video || video.readyState < 2) return;
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return;
+  if (handWorker) {
+    /* the worker: it gets a small copy of the camera picture, stamped with the moment it was taken, as soon as
+       it has answered the one before. If it stays silent for long, it is given up */
+    if (handBusy) {
+      if (performance.now() - workerSentAt > (handOK ? 8000 : 45000)) workerFailed();
+      return;
+    }
+    if (ms - lastSend < 40) return;
+    camAsp = vw / vh;
+    const w = handWorker, stamp = performance.now();
+    handBusy = true; lastSend = ms; workerSentAt = stamp;
+    createImageBitmap(video, { resizeWidth: 640, resizeHeight: Math.max(2, Math.round(640 / camAsp)) }).then(bm => {
+      if (handWorker !== w) { bm.close(); return; }
+      w.postMessage({ img: bm, stamp: stamp }, [bm]);
+    }, () => { if (handWorker === w) handBusy = false; });
+    return;
+  }
+  if (handBusy || ms - lastSend < (splitView && stage !== 4 ? 75 : 55)) return;
   camAsp = vw / vh;
   const sh = Math.max(2, Math.round(640 / camAsp));
   if (small.height !== sh) small.height = sh;
@@ -2486,7 +2633,9 @@ function startRec() {
   if (recorder || recArm || typeof MediaRecorder === 'undefined' || !outC.captureStream) return;
   setSplit(true);
   wakeAudio();
-  const stream = outC.captureStream(30);
+  /* the scene is drawn 30 times a second, but not on an exact beat. The capture is allowed twice that rate, so
+     that a frame which comes a little early is taken as well and not thrown away as one too many */
+  const stream = outC.captureStream(60);
   if (actx && masterOut) {
     if (!recAudio) { recAudio = actx.createMediaStreamDestination(); masterOut.connect(recAudio); }
     const tracks = recAudio.stream.getAudioTracks();
