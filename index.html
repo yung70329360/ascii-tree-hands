@@ -580,39 +580,43 @@ function drawSnow() {
     if (fy < 0.97) put(x, y0, ch, (rgb | (((al * (1 - fy)) | 0) << 24)) >>> 0, -1000);
     if (fy > 0.03) put(x, y0 + 1, ch, (rgb | (((al * fy) | 0) << 24)) >>> 0, -1000);
   }
-  /* the snow a hand has sprinkled: many small flakes, some bright and near, some faint and far, that fall
-     straight down over the tree and thin out before they reach the ground */
-  const fadeA = rows * 0.6, fadeB = rows * 0.86;
+  /* the snow a hand has sprinkled: the same bright little crosses as the falling snow, many more of them, in
+     loose strings one above the other. They fall straight down in front of the tree and thin out below it */
+  const fadeA = rows * 0.58, fadeB = rows * 0.8;
   for (let i = 0; i < EXN; i++) {
     if (exT[i] < 0) continue;
     const age = tReal - exT[i];
     const y = exY[i] + exV[i] * rows * age;
     if (y > fadeB) { exT[i] = -1; continue; }
-    let a = exA[i] * (age < 0.25 ? age * 4 : 1);
+    let a = age < 0.15 ? age / 0.15 : 1;
     if (y > fadeA) a *= 1 - (y - fadeA) / (fadeB - fadeA);
-    const x = exX[i] + Math.sin(age * 1.7 + i) * 0.35;
-    /* a flake is shared between the two rows it lies across, so it glides instead of hopping */
-    const y0 = Math.floor(y), fy = smooth((y - y0 - 0.3) / 0.4);
-    if (fy < 0.97) put(x, y0, exG[i], rgba(248, 250, 255, a * (1 - fy)), -999);
-    if (fy > 0.03) put(x, y0 + 1, exG[i], rgba(248, 250, 255, a * fy), -999);
+    put(exX[i], y, exG[i], rgba(250, 251, 255, a), 95);
   }
 }
+const snowCols = new Float32Array(16);
+let snowColT = -9;
 function emitSnow(dt) {
   const now = performance.now() / 1000;
   if (now - snowSeen > 0.6 || snowRate <= 0) { snowAcc = 0; return; }
+  /* sixteen columns are "open" at a time and one of them moves every tenth of a second: most flakes drop from
+     an open column, which is what makes the strings */
+  const cx = extra + clamp(snowU, 0.18, 0.82) * COLS;
+  if (now - snowColT > 0.1) {
+    snowColT = now;
+    const k = Math.floor(Math.random() * 16);
+    snowCols[k] = Math.round(cx + (Math.random() + Math.random() - 1) * 30);
+    for (let j = 0; j < 16; j++) if (snowCols[j] === 0) snowCols[j] = Math.round(cx + (Math.random() + Math.random() - 1) * 30);
+  }
   snowAcc += snowRate * dt;
   while (snowAcc >= 1) {
     snowAcc -= 1;
     const i = exHead; exHead = (exHead + 1) % EXN;
-    /* born across a band about half the stage wide above the tree, nudged toward the hand, and at any height
-       in the sky above the star, so the curtain is there at once */
-    exX[i] = extra + (0.5 + (snowU - 0.5) * 0.4) * COLS + (Math.random() + Math.random() - 1) * 40;
-    exY[i] = rows * (0.02 + 0.26 * Math.random());
+    exX[i] = Math.random() < 0.6 ? snowCols[Math.floor(Math.random() * 16)] : Math.round(cx + (Math.random() + Math.random() - 1) * 36);
+    exY[i] = rows * (0.04 + 0.24 * Math.random());
     exT[i] = tReal;
-    const d = Math.random();
-    exV[i] = 0.05 + 0.09 * d;
-    exA[i] = 0.55 + 0.45 * d;
-    exG[i] = d < 0.2 ? c_dot : d < 0.7 ? c_plus : c_star;
+    exV[i] = 0.07 + 0.045 * Math.random();
+    exA[i] = 1;
+    exG[i] = Math.random() < 0.9 ? c_plus : c_star;
   }
 }
 
@@ -2096,7 +2100,7 @@ function onResults(res) {
       /* the pose alone is not enough: the fingers have to be rubbing */
       /* while the film waits for the gathered-fingers gesture, which looks the same for a moment, the pose
          has to be held clearly longer */
-      if (now - tr.snowT0 >= (mode === 'hands' && stage === 2 ? 0.9 : 0.3) && tr.rub > 0.5) { snowU = h.u; snowVv = h.v; snowRate = clamp(90 + (tr.rub - 0.5) * 70, 90, 300); snowSeen = now; }
+      if (now - tr.snowT0 >= (mode === 'hands' && stage === 2 ? 0.9 : 0.3) && tr.rub > 0.5) { snowU = h.u; snowVv = h.v; snowRate = clamp(85 + (tr.rub - 0.5) * 30, 85, 150); snowSeen = now; }
     }
   }
 
@@ -2169,31 +2173,33 @@ function onResults(res) {
        - a left and a right hand, both open, with their palms together;
        - two open hands that come toward each other and become one: when the palms touch, the camera usually
          loses one hand, and the hand that is left sits where the middle between them was */
-    if (hs.length >= 2) {
-      const a = hs[0], b = hs[1], S = (a.size + b.size) / 2;
-      const dist = d2(a.P[9], b.P[9]) / S;
-      clapBuf.push({ t: now, d: dist, mx: (a.P[9].x + b.P[9].x) / 2, my: (a.P[9].y + b.P[9].y) / 2, S: S });
+    /* the tracker sometimes reports one hand twice for a frame; two "hands" on the same spot are one hand */
+    let two = hs.length >= 2;
+    let dist = 0, S = 1;
+    if (two) {
+      S = (hs[0].size + hs[1].size) / 2;
+      dist = d2(hs[0].P[9], hs[1].P[9]) / S;
+      if (dist < 0.35) two = false;
+    }
+    if (two) {
+      clapBuf.push({ t: now, d: dist, mx: (hs[0].P[9].x + hs[1].P[9].x) / 2, my: (hs[0].P[9].y + hs[1].P[9].y) / 2, S: S });
       while (clapBuf.length && clapBuf[0].t < now - 0.9) clapBuf.shift();
       clapLast = now;
-      /* the hands have come together: they were clearly further apart within the last moment and are close now.
-         Whether the fingers look open is not asked: seen edge-on at the moment of the clap they rarely do */
+      /* the hands have come together: clearly further apart a moment ago, close now */
       let far = 0;
       for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].d > far) far = clapBuf[j].d;
-      if (dist < 1.7 && far - dist >= 0.7) { clapBuf.length = 0; requestStage(5); return; }
-    } else if (clapBuf.length >= 1 && now - clapLast < 0.5) {
-      /* when the palms meet, the tracker usually loses one hand or both for a moment. If the two hands were
-         closing, or were already near each other, or the one that is left sits between where they were,
-         that is the clap */
-      const last = clapBuf[clapBuf.length - 1];
+      if (dist < 2.0 && far - dist >= 1.5) { clapBuf.length = 0; requestStage(5); return; }
+    } else if (clapBuf.length >= 2 && now - clapLast < 0.25) {
+      /* when the palms meet, the tracker usually loses one hand or both. That counts as the clap only if the
+         two hands were seen closing in on each other quickly just before */
+      const last = clapBuf[clapBuf.length - 1], prev = clapBuf[clapBuf.length - 2];
       let far = 0;
-      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].d > far) far = clapBuf[j].d;
-      let hit = last.d < 2.4 || (last.d <= 5.5 && far - last.d >= 0.4);
-      if (!hit && hs.length === 1 && last.d <= 7) {
-        const mid = Math.hypot(hs[0].P[9].x - last.mx, hs[0].P[9].y - last.my) / (last.d * last.S + 1e-6);
-        hit = mid < 0.42;
-      }
+      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].t > now - 0.7 && clapBuf[j].d > far) far = clapBuf[j].d;
+      /* closing fast, by a good part of a hand, and not far apart any more when last seen */
+      const speed = (prev.d - last.d) / Math.max(0.03, last.t - prev.t);
+      const hit = last.d <= 4.5 && far - last.d >= 1.5 && speed >= 6;
       if (hit) { clapBuf.length = 0; requestStage(5); return; }
-    } else if (now - clapLast > 0.6) clapBuf.length = 0;
+    } else if (now - clapLast > 0.4) clapBuf.length = 0;
   }
 }
 
