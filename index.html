@@ -685,11 +685,11 @@ function drawFallingLight() {
   if (T < 0.05 || T >= 0.39) return;
   const p = (T - 0.05) / 0.34;
   const y = Math.round(lerp(-2, floorRow, p * p)), x = Math.round(cxc);
-  put(x, y, c_at, hsl(218, 0.2, 0.98), 60);
+  put(x, y, c_at, hsl(345, 0.3, 0.97), 60);
   for (let j = 1; j <= 22; j++) {
-    put(x, y - j, j < 8 ? c_hash : c_pipe, hsl(218, 0.22, 0.9, Math.pow(1 - j / 23, 1.2)), 59);
+    put(x, y - j, j < 8 ? c_hash : c_pipe, hsl(345, 0.3 + 0.012 * j, 0.93 - 0.006 * j, Math.pow(1 - j / 23, 1.2)), 59);
   }
-  addHalo(x, y, 6, 0.55, hsl(218, 0.25, 0.94));
+  addHalo(x, y, 6, 0.55, hsl(345, 0.35, 0.93));
 }
 
 /* ---- the heart magic circle ----
