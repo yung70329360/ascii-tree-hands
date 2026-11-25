@@ -116,11 +116,11 @@ const bl3 = document.createElement('canvas'), bl3x = bl3.getContext('2d');
 const tintC = document.createElement('canvas'), tintX = tintC.getContext('2d');
 /* the split view, which is also what gets recorded: the camera across the top, the scene underneath */
 const outC = document.getElementById('out'), outX = outC.getContext('2d');
-/* a 720 x 1280 picture. The scene is drawn with its stage at three quarters of the full width, so the whole
+/* a 1080 x 1920 picture, 9:16. The scene is drawn with its stage at three quarters of the full width, so the whole
    tree, the gifts and the floor fit under the camera picture with some sky above the star for the snow */
-const OUT_W = 720, OUT_H = 1280, CAM_H = 405, SCENE_H = 960, SCENE_Y0 = (960 - (1280 - 405)) / 960;
+const OUT_W = 1080, OUT_H = 1920, CAM_H = 608, SCENE_H = 1440, SCENE_Y0 = (1440 - (1920 - 608)) / 1440;
 /* the camera picture is kept for a moment, so it can be shown together with the hand positions found in it */
-const RING = 12, ringC = [], ringX = [], ringT = new Float64Array(RING), resQ = [];
+const RING = 10, ringC = [], ringX = [], ringT = new Float64Array(RING), resQ = [];
 let ringHead = 0, sendMs = 0;
 for (let i = 0; i < RING; i++) {
   const c = document.createElement('canvas');
@@ -130,6 +130,8 @@ for (let i = 0; i < RING; i++) {
 outC.width = OUT_W; outC.height = OUT_H;
 let splitView = false;
 let tintImg = null, tintPx = new Uint32Array(1), glowImg = null, glowPx = new Uint32Array(1);
+let rowText = false, rowX = 0;
+const rowBuf = [];
 
 let dpr = 1, W = 2, H = 2, PW = 2, CW = 1, CH = 1.62, AR = 1 / 1.62, rows = 1, gcols = COLS, extra = 0;
 let gridX0 = 0, stageX = 0, cxc = 61.5;
@@ -179,6 +181,14 @@ function resize() {
   bgx.fillStyle = gr; bgx.fillRect(0, 0, W, H);
   lctx.font = 'bold ' + (0.95 * CH).toFixed(2) + 'px Menlo, Consolas, "DejaVu Sans Mono", monospace';
   lctx.textAlign = 'center'; lctx.textBaseline = 'middle';
+  /* where the browser can space letters itself, a whole row of the grid is drawn as one piece of text:
+     the letter spacing is set so that every character lands in the middle of its own cell */
+  rowText = 'letterSpacing' in lctx;
+  if (rowText) {
+    const adv = lctx.measureText('#').width;
+    if (adv > 0 && adv < CW * 1.5) { lctx.letterSpacing = (CW - adv) + 'px'; lctx.textAlign = 'left'; rowX = gridX0 + (CW - adv) / 2; }
+    else rowText = false;
+  }
 }
 
 function put(x, y, ch, col, z) {
@@ -1610,12 +1620,14 @@ function render() {
   lctx.globalCompositeOperation = 'source-over';
   lctx.clearRect(0, 0, W, H);
   lctx.fillStyle = '#ffffff';
-  const gc = gcols, px = tintPx, gp = glowPx;
+  const gc = gcols, px = tintPx, gp = glowPx, byRow = rowText, rb = rowBuf;
+  rb.length = gc;
   for (let y = 0; y < rows; y++) {
     const py = (y + 0.5) * CH, row = y * gc;
+    let last = -1;
     for (let x = 0; x < gc; x++) {
       const i = row + x, ch = chA[i];
-      if (ch === 0) { px[i] = 0; gp[i] = 0; continue; }
+      if (ch === 0) { px[i] = 0; gp[i] = 0; if (byRow) rb[x] = ' '; continue; }
       const c = colA[i];
       const r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
       px[i] = ((c & 0xff00ff00) | r | (b << 16)) >>> 0;
@@ -1625,8 +1637,9 @@ function render() {
       if (g2 < 0) g2 = 0;
       if (b2 < 0) b2 = 0;
       gp[i] = r2 + g2 + b2 > 0 ? ((c & 0xff000000) | r2 | (g2 << 8) | (b2 << 16)) >>> 0 : 0;
-      lctx.fillText(CHS[ch], gridX0 + (x + 0.5) * CW, py);
+      if (byRow) { rb[x] = CHS[ch]; last = x; } else lctx.fillText(CHS[ch], gridX0 + (x + 0.5) * CW, py);
     }
+    if (byRow && last >= 0) lctx.fillText(rb.slice(0, last + 1).join(''), rowX, py);
   }
   tintX.putImageData(tintImg, 0, 0);
   lctx.globalCompositeOperation = 'source-in';
@@ -1661,8 +1674,8 @@ function render() {
 
 function frame(ms) {
   requestAnimationFrame(frame);
-  /* the split view is what gets recorded: it is drawn at an even 30 frames a second, which leaves the hand
-     tracker and the video encoder enough time and keeps the motion in the recording regular */
+  /* the split view is what gets recorded: it is drawn at an even 30 frames a second, which keeps the motion in
+     the recording regular and leaves time for the hand tracker and the video encoder */
   if (splitView && ms - lastMs < 30) return;
   const dt = document.hidden ? 0 : Math.min(0.25, Math.max(0, (ms - lastMs) / 1000));
   lastMs = ms;
@@ -1779,7 +1792,9 @@ async function startCamera() {
 }
 
 function pumpHands(ms) {
-  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < 55) return;
+  /* the tracker and the drawing share one thread and one graphics card. In the split view, where the picture
+     is also being encoded as video, the tracker is asked a little less often so the frames stay regular */
+  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < (splitView ? 75 : 55)) return;
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return;
   camAsp = vw / vh;
@@ -1884,7 +1899,7 @@ function clearGestures() {
    and the downward circle), and the path is big enough, measured in hand sizes, that finger jitter does not count */
 function circleOK(path, minRad, minTurn) {
   const n = path.length;
-  if (n < 6) return false;
+  if (n < 5) return false;
   let cx = 0, cy = 0, size = 0;
   for (let i = 0; i < n; i++) { cx += path[i].x; cy += path[i].y; size += path[i].s; }
   cx /= n; cy /= n; size /= n;
@@ -1950,7 +1965,14 @@ function onResults(res) {
     if (!raw[i] || raw[i].length < 21) continue;
     const h = analyse(raw[i]);
     h.side = sides[i] ? sides[i].label : '';
-    hs.push(h);
+    /* now and then the tracker reports one hand twice, almost in the same place. The copy is dropped:
+       it would be followed as a hand of its own and take half of a gesture away from the real one */
+    let twin = false;
+    for (let j = 0; j < hs.length; j++) {
+      const d = d2(hs[j].P[9], h.P[9]) / Math.max(hs[j].size, h.size);
+      if (d < 0.3 || (d < 0.6 && hs[j].side === h.side)) twin = true;
+    }
+    if (!twin) hs.push(h);
   }
   assignTracks(hs, now);
   const vis = hs.filter(h => h.inside);
@@ -2000,7 +2022,7 @@ function onResults(res) {
       const h = hs[i], tr = h.tr;
       const ok = next === 2 ? h.pointing : h.pointDown;
       if (!ok) {
-        if (tr.path.length && now - tr.path[tr.path.length - 1].t > 0.3) tr.path.length = 0;
+        if (tr.path.length && now - tr.path[tr.path.length - 1].t > 0.5) tr.path.length = 0;
         continue;
       }
       if (circleLock) continue;
@@ -2024,11 +2046,11 @@ function onResults(res) {
     for (let i = 0; i < hs.length; i++) {
       const h = hs[i], tr = h.tr;
       if (h.bunch) {
-        if (tr.bunchT0 === null || now - tr.bunchT > 0.25) tr.bunchT0 = now;
+        if (tr.bunchT0 === null || now - tr.bunchT > 0.4) tr.bunchT0 = now;
         tr.bunchT = now;
       } else if (tr.bunchT0 !== null) {
-        if (now - tr.bunchT > 0.4) tr.bunchT0 = null;
-        else if (h.burst && tr.bunchT - tr.bunchT0 >= 0.2) { requestStage(3); return; }
+        if (now - tr.bunchT > 0.55) tr.bunchT0 = null;
+        else if (h.burst && tr.bunchT - tr.bunchT0 >= 0.12) { requestStage(3); return; }
       }
     }
   } else if (next === 5) {
@@ -2110,7 +2132,7 @@ function drawSplit() {
   outX.beginPath();
   outX.rect(0, 0, OUT_W, CAM_H);
   outX.clip();
-  outX.lineWidth = 2.5;
+  outX.lineWidth = 3.5;
   outX.lineCap = 'round';
   outX.strokeStyle = 'rgba(255,255,255,0.85)';
   outX.fillStyle = '#ffffff';
@@ -2120,7 +2142,7 @@ function drawSplit() {
     for (let b = 0; b < BONES.length; b++) { outX.moveTo(px[BONES[b][0]], py[BONES[b][0]]); outX.lineTo(px[BONES[b][1]], py[BONES[b][1]]); }
     outX.stroke();
     for (let i = 0; i < 21; i++) {
-      const r = i % 4 === 0 && i > 0 ? 6.5 : 4.5;
+      const r = i % 4 === 0 && i > 0 ? 9 : 6;
       outX.beginPath();
       outX.roundRect(px[i] - r, py[i] - r, 2 * r, 2 * r, r);
       outX.fill();
@@ -2454,7 +2476,7 @@ function startRec() {
   let kind = '';
   for (let i = 0; i < kinds.length; i++) if (MediaRecorder.isTypeSupported(kinds[i])) { kind = kinds[i]; break; }
   try {
-    recorder = new MediaRecorder(stream, kind ? { mimeType: kind, videoBitsPerSecond: 8000000 } : { videoBitsPerSecond: 8000000 });
+    recorder = new MediaRecorder(stream, kind ? { mimeType: kind, videoBitsPerSecond: 12000000 } : { videoBitsPerSecond: 12000000 });
   } catch (err) {
     recorder = null;
     return;
