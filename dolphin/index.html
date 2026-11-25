@@ -1797,7 +1797,9 @@ function analyse(lm) {
   h.idxDz = (P[8].z - P[5].z) / size;
   h.pointDown = others < 3 && (P[5].y - P[8].y) / size < -0.6 && (ext[0] || d3(P[8], P[5]) > 0.75 * size);
   h.pointFwd = others < 2 && (ext[0] || h.idxDz < -0.4);
-  h.snow = !h.upright && !h.pointDown && (nDown >= 3 || (h.v < 1 / 3 && P[8].y > P[5].y && P[12].y > P[9].y));
+  /* a hand that is pointing with its index finger is drawing a circle: it neither sprinkles snow nor twists */
+  h.idxOnly = ext[0] && others === 0;
+  h.snow = !h.upright && !h.pointDown && !h.idxOnly && (nDown >= 3 || (h.v < 1 / 3 && P[8].y > P[5].y && P[12].y > P[9].y));
   h.tf = (d3(P[4], P[8]) + d3(P[4], P[12])) / 2 / size;
   h.palmAng = Math.atan2((lm[5].z || 0) - (lm[17].z || 0), (1 - lm[5].x) - (1 - lm[17].x));
   h.midLen = d3(P[12], P[0]) / size;
@@ -1809,7 +1811,7 @@ function analyse(lm) {
 }
 
 function newTrack() {
-  return { x: 0, y: 0, prevX: null, prevY: null, seen: 0, matched: false, bunchT0: null, bunchT: -9, path: [], snap: [],
+  return { x: 0, y: 0, prevX: null, prevY: null, seen: 0, matched: false, bunchT0: null, bunchT: -9, snowT0: null, path: [], snap: [],
     ang: [], angU: 0, angS: 0, angRaw: null, tfPrev: null, tfT: 0, rub: 0 };
 }
 function assignTracks(hs, now) {
@@ -1918,12 +1920,17 @@ function onResults(res) {
       tr.rub = tr.rub * 0.55 + Math.min(rate, 12) * 0.45;
     }
     tr.tfPrev = h.tf; tr.tfT = now;
-    if (h.snow) { snowU = h.u; snowVv = h.v; snowRate = clamp((tr.rub - 0.5) * 40, 0, 240); snowSeen = now; }
+    /* the sprinkling pose has to be held for a moment, so a hand that only passes through it does not snow */
+    if (!h.snow) tr.snowT0 = null;
+    else {
+      if (tr.snowT0 === null) tr.snowT0 = now;
+      if (now - tr.snowT0 >= 0.3) { snowU = h.u; snowVv = h.v; snowRate = clamp((tr.rub - 0.5) * 40, 0, 240); snowSeen = now; }
+    }
   }
 
   /* twist: one upright hand, not counting a snow hand */
   const ns = vis.filter(h => !h.snow);
-  if (ns.length === 1 && ns[0].upright && !ns[0].pointing && state === 'film' && T > 2.1) twistDetect(ns[0], now);
+  if (ns.length === 1 && ns[0].upright && !ns[0].pointing && !ns[0].idxOnly && state === 'film' && T > 2.1) twistDetect(ns[0], now);
   else for (let i = 0; i < tracks.length; i++) { tracks[i].ang.length = 0; tracks[i].angRaw = null; }
 
   if (mode !== 'hands' || state !== 'film' || paused) return;
