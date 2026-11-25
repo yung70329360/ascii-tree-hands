@@ -1077,7 +1077,7 @@ function drawLights(rot) {
     const idx = y * gc + x;
     /* lights step aside within two cells of the deer, so its fine lines stay readable; beyond that they are just a little softer */
     const dm = dimA[idx];
-    if (z < depA[idx] || dm < 0.92) continue;
+    if (z < depA[idx] || dm < 0.86) continue;
     depA[idx] = z; chA[idx] = bCh[lB[i]] === c_at ? c_at : LIGHT_GL[i & 7]; colA[idx] = dm < 0.99 ? dimCol(col, dm) : col;
   }
 }
@@ -1573,27 +1573,28 @@ function prepDeer() {
       const lx0 = (x - ox) / s;
       /* two samples per cell, one above the other, so thin legs and antlers do not break up */
       const d = Math.min(deerSDF(lx0 * pc + lya * ps, -lx0 * ps + lya * pc), deerSDF(lx0 * pc + lyb * ps, -lx0 * ps + lyb * pc)) * s;
-      if (d >= 3) continue;
+      if (d >= 3.8) continue;
       const idx = y * gcols + x;
-      /* the tree is only slightly darker right against the deer; there is no dark patch around it */
-      dimA[idx] = lerp(1, lerp(0.7, 1, smooth((d - 0.1) / 2.9)), dimK);
+      /* the tree is a little darker close around the deer, a soft shade and not a dark patch */
+      dimA[idx] = lerp(1, lerp(0.56, 1, smooth((d - 0.1) / 3.7)), dimK);
       if (d < 0.12 && deerN < DEER_MAX) { deerI[deerN] = idx; deerD[deerN] = d; deerMask[idx] = 1; deerN++; }
     }
   }
 }
-const DEER_EDGE = [c_at, c_8, c_8, c_hash, c_at, c_8, c_at, c_8];
+const DEER_EDGE = [c_at, c_at, c_hash, c_at, c_8, c_at, c_hash, c_at];
 const DEER_IN = [c_star, c_plus, c_x, c_colon, c_star, c_colon, c_plus, c_colon];
 function drawDeer() {
   const tk = Math.floor(tReal * 4);
   /* a crisp white outline one cell thick; the inside is filled with small pale-blue marks that twinkle */
   for (let i = 0; i < deerN; i++) {
     const idx = deerI[i], x = idx % gcols, y = (idx / gcols) | 0;
-    const edge = !deerMask[idx - 1] || !deerMask[idx + 1] || !deerMask[idx - gcols] || !deerMask[idx + gcols];
+    /* the outline is every cell within about a column of the edge, so it is one to two cells thick */
+    const edge = deerD[i] > -1.2 || !deerMask[idx - 1] || !deerMask[idx + 1] || !deerMask[idx - gcols] || !deerMask[idx + gcols];
     if (edge) {
-      put(x, y, DEER_EDGE[(h2(x * 3 + 1, y * 5 + 2) * 8) & 7], rgba(253, 254, 255), 101);
+      put(x, y, DEER_EDGE[(h2(x * 3 + 1, y * 5 + 2) * 8) & 7], rgba(255, 255, 255), 101);
     } else {
       const hv = h3(x, y, tk + ((x * 7 + y * 3) & 3));
-      if (hv < 0.86) put(x, y, DEER_IN[(hv * 9.3) & 7], hsl(213, 0.55, hv < 0.18 ? 0.93 : 0.8), 100);
+      if (hv < 0.86) put(x, y, DEER_IN[(hv * 9.3) & 7], hsl(213, 0.55, hv < 0.2 ? 0.94 : 0.84), 100);
     }
   }
 }
@@ -1662,8 +1663,8 @@ function render() {
       if (r2 < 0) r2 = 0;
       if (g2 < 0) g2 = 0;
       if (b2 < 0) b2 = 0;
-      /* the deer keeps its fine lines: it glows only a little */
-      if (depA[i] === 100 || depA[i] === 101) { r2 *= 0.22; g2 *= 0.22; b2 *= 0.22; }
+      /* the deer's outline glows enough to stand out; its filling hardly glows, so the lines stay distinct */
+      if (depA[i] === 100) { r2 *= 0.25; g2 *= 0.25; b2 *= 0.25; } else if (depA[i] === 101) { r2 *= 0.7; g2 *= 0.7; b2 *= 0.7; }
       gp[i] = r2 + g2 + b2 > 0 ? ((c & 0xff000000) | r2 | (g2 << 8) | (b2 << 16)) >>> 0 : 0;
       if (!rowText) { lctx.fillText(CHS[ch], gridX0 + (x + 0.5) * CW, py); continue; }
       if (first < 0) first = x;
