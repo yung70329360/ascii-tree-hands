@@ -19,6 +19,8 @@ body.split #out { display: block; }
 #bSplit::before { top: 8px; height: 4px; }
 #bSplit::after { top: 17px; height: 8px; }
 #bRec::before { content: ''; position: absolute; left: 9px; top: 9px; width: 15px; height: 15px; border-radius: 50%; background: #ff4a4a; }
+body.arm #bRec { opacity: 1; border-color: #ffb84a; }
+body.arm #bRec::before { background: #ffb84a; animation: blink 0.4s steps(2, start) infinite; }
 body.rec #bRec { opacity: 1; border-color: #ff4a4a; }
 body.rec #bRec::before { border-radius: 2px; left: 11px; top: 11px; width: 11px; height: 11px; animation: blink 1s steps(2, start) infinite; }
 @keyframes blink { to { visibility: hidden; } }
@@ -1763,7 +1765,7 @@ const tracks = [];
 let circleLock = false, lastPointT = -9;
 const lockBuf = [];
 const clapBuf = [], fwdPath = [];
-let clapTogether = -9, clapOne = 0;
+let clapOne = 0;
 let clapLast = -9;
 const FT = [8, 12, 16, 20], FP = [6, 10, 14, 18], FM = [5, 9, 13, 17], FD = [7, 11, 15, 19];
 const BONES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12],
@@ -1793,8 +1795,9 @@ async function startCamera() {
 
 function pumpHands(ms) {
   /* the tracker and the drawing share one thread and one graphics card. In the split view, where the picture
-     is also being encoded as video, the tracker is asked a little less often so the frames stay regular */
-  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < (splitView ? 75 : 55)) return;
+     is also being encoded as video, the tracker is asked a little less often so the frames stay regular;
+     except while the clap is awaited, which is over in a moment and needs every look it can get */
+  if (!hands || handBusy || !video || video.readyState < 2 || ms - lastSend < (splitView && stage !== 4 ? 75 : 55)) return;
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return;
   camAsp = vw / vh;
@@ -1893,7 +1896,7 @@ function assignTracks(hs, now) {
 }
 function clearGestures() {
   for (let i = 0; i < tracks.length; i++) { const tr = tracks[i]; tr.bunchT0 = null; tr.bunchT = -9; tr.path.length = 0; tr.snap.length = 0; }
-  clapBuf.length = 0; clapLast = -9; clapTogether = -9; clapOne = 0; fwdPath.length = 0;
+  clapBuf.length = 0; clapLast = -9; clapOne = 0; fwdPath.length = 0;
 }
 /* the fingertip has gone far enough round the middle of its own path (three quarters of a turn for the upright
    and the downward circle), and the path is big enough, measured in hand sizes, that finger jitter does not count */
@@ -2055,38 +2058,43 @@ function onResults(res) {
     }
   } else if (next === 5) {
     /* one clap. The palms meet edge-on to the camera and blur while they move, so the tracker rarely sees the
-       clap itself. What it does see is two hands, and a moment later the two close together or only one of
-       them left, somewhere along the way to where the other one was. Any of that counts, whatever the poses */
+       clap itself. What it does see is the moment before: two hands apart at about the same height, neither of
+       them pointing with its index finger. A clap is only looked for after that has been seen, so a hand
+       that has just drawn a circle does not start it. After it, any of these counts: the two
+       hands close together, or only one of them left somewhere along the way to where the other one was */
     if (hs.length >= 2) {
       const a = hs[0], b = hs[1], S = (a.size + b.size) / 2;
       const dist = d2(a.P[9], b.P[9]) / S;
-      clapBuf.push({ t: now, d: dist, ax: a.P[9].x, ay: a.P[9].y, bx: b.P[9].x, by: b.P[9].y, S: S });
-      while (clapBuf.length && clapBuf[0].t < now - 0.9) clapBuf.shift();
+      const ready = dist >= 1.5 && !a.idxOnly && !b.idxOnly && !a.pointDown && !b.pointDown && Math.abs(a.P[9].y - b.P[9].y) < 0.6 * dist * S;
+      clapBuf.push({ t: now, d: dist, ready: ready, ax: a.P[9].x, ay: a.P[9].y, bx: b.P[9].x, by: b.P[9].y, S: S });
+      while (clapBuf.length && clapBuf[0].t < now - 1.0) clapBuf.shift();
       clapLast = now; clapOne = 0;
       let far = 0;
-      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].d > far) far = clapBuf[j].d;
-      if (dist < 1.5) {
+      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].ready && clapBuf[j].d > far) far = clapBuf[j].d;
+      if (dist < 1.5 && far > 0) {
         const pair = a.side !== b.side && a.side !== '' && b.side !== '';
-        /* palms together: seen twice within a moment, or once right after the hands came together */
-        if (pair && (now - clapTogether < 0.6 || far - dist >= 0.5)) { requestStage(5); return; }
-        if (far - dist >= 1.0) { requestStage(5); return; }
-        if (pair) clapTogether = now;
+        if (far - dist >= (pair ? 0.5 : 1.0)) { requestStage(5); return; }
       }
     } else if (hs.length === 1 && clapBuf.length >= 1 && now - clapLast < 0.6) {
-      const h = hs[0], last = clapBuf[clapBuf.length - 1];
-      let far = 0;
-      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].d > far) far = clapBuf[j].d;
-      /* how far the hand that is left still is from where the other one was, as a part of the gap there was
-         between them: a hand that simply stayed where it was while the other left the picture scores 1 */
-      const da = Math.hypot(h.P[9].x - last.ax, h.P[9].y - last.ay), db = Math.hypot(h.P[9].x - last.bx, h.P[9].y - last.by);
-      const gap = Math.max(da, db) / (last.d * last.S + 1e-6);
-      if ((last.d <= 4.5 && far - last.d >= 0.6) || (last.d >= 1.5 && last.d <= 6.5 && gap < 0.72)) { clapBuf.length = 0; requestStage(5); return; }
-      /* often one hand hardly moves and the other comes over to it. Then all that is left to see is that the
-         other hand has gone, and it did not go out through an edge of the picture: it was well inside it.
-         Seen twice in a row, so that a hand the tracker drops for a single moment does not count */
-      clapOne++;
-      const gx = (da > db ? last.ax : last.bx) / camAsp, gy = da > db ? last.ay : last.by;
-      if (clapOne >= 2 && last.d >= 1.2 && last.d <= 6.5 && gx > 0.1 && gx < 0.9 && gy > 0.06 && gy < 0.88) { clapBuf.length = 0; requestStage(5); return; }
+      const h = hs[0], lastTwo = clapBuf[clapBuf.length - 1];
+      let far = 0, last = null;
+      for (let j = 0; j < clapBuf.length; j++) if (clapBuf[j].ready) { last = clapBuf[j]; if (last.d > far) far = last.d; }
+      if (last && now - last.t < 0.8) {
+        /* the two were closing when one of them was lost */
+        if (lastTwo.d <= 4.5 && far - lastTwo.d >= 0.6) { clapBuf.length = 0; requestStage(5); return; }
+        /* how far the hand that is left still is from where the other one was, as a part of the gap there was
+           between them: a hand that simply stayed where it was while the other left the picture scores 1 */
+        const da = Math.hypot(h.P[9].x - last.ax, h.P[9].y - last.ay), db = Math.hypot(h.P[9].x - last.bx, h.P[9].y - last.by);
+        const gap = Math.max(da, db) / (last.d * last.S + 1e-6);
+        if (last.d <= 6.5 && gap < 0.72) { clapBuf.length = 0; requestStage(5); return; }
+        /* often one hand hardly moves and the other comes over to it. Then all that is left to see is that the
+           other hand has gone, and it did not go out through an edge of the picture: it was well inside it.
+           The hand that is left has to be open and upright, three times in a row, so that a hand the tracker
+           drops for a moment does not count */
+        clapOne = h.nExt >= 3 && h.upright ? clapOne + 1 : 0;
+        const gx = (da > db ? last.ax : last.bx) / camAsp, gy = da > db ? last.ay : last.by;
+        if (clapOne >= 3 && last.d <= 6.5 && gx > 0.1 && gx < 0.9 && gy > 0.06 && gy < 0.88) { clapBuf.length = 0; requestStage(5); return; }
+      }
     } else if (now - clapLast > 0.6) clapBuf.length = 0;
   }
 }
@@ -2447,25 +2455,33 @@ window.addEventListener('keydown', e => {
   else if (k === 'd' || k === 'D') twistDir = -twistDir;
   else if (k === 't' || k === 'T') doTwist();
   else if (k === 'l' || k === 'L') setSplit(!splitView);
-  else if (k === 'v' || k === 'V') { if (recorder) stopRec(); else startRec(); }
+  else if (k === 'v' || k === 'V') { if (recorder || recArm) stopRec(); else startRec(); }
 });
 cv.addEventListener('pointerdown', wakeAudio);
 outC.addEventListener('pointerdown', wakeAudio);
 
 /* ---- split view and recording ---- */
-let recorder = null, recChunks = [], recAudio = null;
+let recorder = null, recChunks = [], recAudio = null, recArm = 0, recWarm = null;
 function setSplit(on) {
-  if (recorder && !on) return;
+  if ((recorder || recArm) && !on) return;
   splitView = on;
   document.body.classList.toggle('split', on);
   resize();
 }
+function dropWarm() {
+  if (!recWarm) return;
+  const w = recWarm;
+  recWarm = null;
+  w.ondataavailable = null;
+  try { if (w.state !== 'inactive') w.stop(); } catch (err) { /* it had not started */ }
+}
+/* switching to the split view and starting the video encoder both make the picture stumble for a moment.
+   So the button first gets everything ready, with a throw-away recording running to wake the encoder up,
+   and only about a second later the real recording starts, together with the film */
 function startRec() {
-  if (recorder || typeof MediaRecorder === 'undefined' || !outC.captureStream) return;
+  if (recorder || recArm || typeof MediaRecorder === 'undefined' || !outC.captureStream) return;
   setSplit(true);
   wakeAudio();
-  /* the recording starts with the empty scene, so the film is taken back to its beginning */
-  resetFilm();
   const stream = outC.captureStream(30);
   if (actx && masterOut) {
     if (!recAudio) { recAudio = actx.createMediaStreamDestination(); masterOut.connect(recAudio); }
@@ -2475,10 +2491,18 @@ function startRec() {
   const kinds = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
   let kind = '';
   for (let i = 0; i < kinds.length; i++) if (MediaRecorder.isTypeSupported(kinds[i])) { kind = kinds[i]; break; }
+  const opts = kind ? { mimeType: kind, videoBitsPerSecond: 12000000 } : { videoBitsPerSecond: 12000000 };
+  try { recWarm = new MediaRecorder(stream, opts); recWarm.start(); } catch (err) { recWarm = null; }
+  document.body.classList.add('arm');
+  recArm = setTimeout(() => { recArm = 0; beginRec(stream, kind, opts); }, 1200);
+}
+function beginRec(stream, kind, opts) {
+  document.body.classList.remove('arm');
   try {
-    recorder = new MediaRecorder(stream, kind ? { mimeType: kind, videoBitsPerSecond: 12000000 } : { videoBitsPerSecond: 12000000 });
+    recorder = new MediaRecorder(stream, opts);
   } catch (err) {
     recorder = null;
+    dropWarm();
     return;
   }
   recChunks = [];
@@ -2496,18 +2520,31 @@ function startRec() {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 20000);
+    /* the picture is no longer being captured once the recording is over */
+    const vt = stream.getVideoTracks();
+    for (let i = 0; i < vt.length; i++) vt[i].stop();
     recChunks = [];
     recorder = null;
     document.body.classList.remove('rec');
   };
   rec.start(1000);
+  dropWarm();
+  /* the recording starts with the empty scene, so the film is taken back to its beginning */
+  resetFilm();
   document.body.classList.add('rec');
 }
 function stopRec() {
+  if (recArm) {
+    clearTimeout(recArm);
+    recArm = 0;
+    dropWarm();
+    document.body.classList.remove('arm');
+    return;
+  }
   if (recorder && recorder.state !== 'inactive') recorder.stop();
 }
 document.getElementById('bSplit').addEventListener('click', e => { e.currentTarget.blur(); setSplit(!splitView); });
-document.getElementById('bRec').addEventListener('click', e => { e.currentTarget.blur(); if (recorder) stopRec(); else startRec(); });
+document.getElementById('bRec').addEventListener('click', e => { e.currentTarget.blur(); if (recorder || recArm) stopRec(); else startRec(); });
 window.addEventListener('load', begin);
 window.addEventListener('resize', resize);
 
