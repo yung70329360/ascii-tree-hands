@@ -506,7 +506,7 @@ function genTree() {
 const NSNOW = 1200;
 const snX = new Float32Array(NSNOW), snY = new Float32Array(NSNOW), snV = new Float32Array(NSNOW);
 const snW = new Float32Array(NSNOW), snP = new Float32Array(NSNOW), snC = new Uint32Array(NSNOW);
-const EXN = 2600;
+const EXN = 3600;
 const exX = new Float32Array(EXN), exY = new Float32Array(EXN), exT = new Float32Array(EXN).fill(-1);
 const exV = new Float32Array(EXN), exA = new Float32Array(EXN);
 const exG = new Uint8Array(EXN);
@@ -624,8 +624,7 @@ function drawSnow() {
     const x = snX[i] * gcols - 0.5 + Math.sin(tReal * snW[i] + snP[i]) * 0.7;
     put(x, y, snV[i] < 0.027 ? c_dot : snV[i] < 0.045 ? c_plus : c_star, snC[i], -1000);
   }
-  /* the snow a hand has sprinkled: a dense curtain of flakes, some bright and some faint, that falls
-     straight down from where it was let go */
+  /* the snow a hand has sprinkled: a cloud of bright flakes that falls straight down from where it was let go */
   for (let i = 0; i < EXN; i++) {
     if (exT[i] < 0) continue;
     const age = tReal - exT[i];
@@ -641,16 +640,21 @@ function emitSnow(dt) {
   while (snowAcc >= 1) {
     snowAcc -= 1;
     const i = exHead; exHead = (exHead + 1) % EXN;
-    /* born in a band about two fifths of the stage wide, centred on the hand. In the split view the band sits
-       at the top edge of the part of the scene that is shown, so the snow is there at once */
-    exX[i] = extra + snowU * COLS + (Math.random() + Math.random() - 1) * 25;
-    exY[i] = splitView ? SCENE_Y0 * rows - 3 + Math.random() * 11 : snowVv * rows - 2 - Math.random() * 8;
+    /* a loose cloud of bright flakes, born around the place the hand is over: most of them within a third of
+       the stage, one in eight thrown out twice as far. In the split view the hand is looked for across the
+       whole camera picture, so its place is taken across the whole width that is shown, and the cloud is
+       born at the top edge of the part of the scene in view, so the snow is there at once */
+    const wide = Math.random() < 0.125 ? 2 : 1;
+    const cx = splitView ? snowU * gcols : extra + snowU * COLS;
+    exX[i] = cx + (Math.random() + Math.random() - 1) * 30 * wide;
+    exY[i] = splitView ? SCENE_Y0 * rows - 3 + Math.random() * 13 : snowVv * rows - 2 - Math.random() * 8;
     exT[i] = tReal;
-    /* a far flake is fainter and slower, a near one bright and quick */
+    /* every flake is a bright plus sign; they fall at very different speeds, so the cloud draws out into a
+       long veil instead of coming down as one block */
     const d = Math.random();
-    exV[i] = 0.045 + 0.085 * d;
-    exA[i] = 0.35 + 0.65 * d;
-    exG[i] = d < 0.14 ? c_dot : c_plus;
+    exV[i] = 0.05 + 0.135 * d * d + 0.03 * Math.random();
+    exA[i] = 0.72 + 0.28 * Math.random();
+    exG[i] = c_plus;
   }
 }
 
@@ -1992,7 +1996,7 @@ function onResults(res) {
     if (!h.snow) tr.snowT0 = null;
     else {
       if (tr.snowT0 === null) tr.snowT0 = now;
-      if (now - tr.snowT0 >= 0.3) { snowU = h.u; snowVv = h.v; snowRate = clamp((tr.rub - 0.5) * 34, 0, 130); snowSeen = now; }
+      if (now - tr.snowT0 >= 0.3) { snowU = h.u; snowVv = h.v; snowRate = clamp((tr.rub - 0.5) * 46, 0, 170); snowSeen = now; }
     }
   }
 
